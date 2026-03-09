@@ -3,8 +3,9 @@
 
 <head>
   <meta charset="UTF-8" />
-  <title>出勤記録</title>
+  <title>出勤記録｜ヨリミチ</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <link rel="icon" href="logo.png" type="image/png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link
@@ -100,15 +101,24 @@
     .spinner { width: 18px; height: 18px; border: 2px solid #ddd; border-top-color: var(--primary);
       border-radius: 50%; animation: spin 0.8s linear infinite; display: inline-block; vertical-align: middle; margin-right: 6px; }
     .hint { font-size: 0.85rem; color: var(--text-sub); margin-bottom: 8px; }
+
+    .hero { display: flex; flex-direction: column; align-items: center; padding: 24px 0 16px; gap: 12px; }
+    .hero-logo { width: 80px; height: 80px; object-fit: contain; }
+    .hero-title { font-size: 1.25rem; font-weight: 700; color: var(--text-main); margin: 0; }
+    .hero-sub { font-size: 0.8rem; color: var(--text-sub); margin: 0; }
+    .config-error { background: #FEF2F2; border: 1px solid #FECACA; color: var(--error); padding: 12px 16px; border-radius: var(--radius); font-size: 0.9rem; margin-bottom: 16px; text-align: center; display: none; }
+    .config-error.show { display: block; }
   </style>
 </head>
 
 <body>
   <div class="container">
-    <header>
-      <h1>出勤記録</h1>
-      <span>誕生日4桁 → スタッフ選択 → QRスキャン</span>
+    <header class="hero">
+      <img src="logo.png" alt="ヨリミチ" class="hero-logo">
+      <h1 class="hero-title">出勤記録</h1>
+      <span class="hero-sub">誕生日4桁 → スタッフ選択 → QRスキャン</span>
     </header>
+    <div id="configError" class="config-error">GASのURLが設定されていません。README の「GitHub Pages」の項を参照し、standalone.html の GAS_URL を書き換えるか、?gasUrl=... で開くか、config.js を用意してください。</div>
 
     <!-- STEP 1: 誕生日4桁 → 候補表示 -->
     <section class="card active" id="sec-birth">
@@ -157,12 +167,32 @@
 
   <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
   <script>
-    const GAS_URL = "https://script.google.com/macros/s/AKfycby9uHvocHSTO7TfwllfdcvF6kkItIBciC6MnJJh_TJDb6hfiG7FLAeMGEV2DhNhI1Hw/exec"; // GitHub Pages利用時はデプロイ後のGASのURLに差し替え
+    var urlParams = new URLSearchParams(window.location.search);
+    var placeId = urlParams.get('place') || '';
 
-    const urlParams = new URLSearchParams(window.location.search);
-    const placeId = urlParams.get('place') || '';
+    var GAS_URL = (function() {
+      var q = urlParams.get('gasUrl');
+      if (q && q.trim()) return q.trim();
+      if (typeof window.__GAS_URL__ === 'string' && window.__GAS_URL__.trim()) return window.__GAS_URL__.trim();
+      return 'https://script.google.com/macros/s/AKfycby9uHvocHSTO7TfwllfdcvF6kkItIBciC6MnJJh_TJDb6hfiG7FLAeMGEV2DhNhI1Hw/exec';
+    })();
+
+    function isGasUrlValid() {
+      if (!GAS_URL || typeof GAS_URL !== 'string') return false;
+      const s = GAS_URL.trim();
+      if (!s || s === 'YOUR_GAS_WEB_APP_URL') return false;
+      try {
+        new URL(s);
+        return true;
+      } catch (_) { return false; }
+    }
 
     async function callGas(action, params) {
+      if (!isGasUrlValid()) {
+        document.getElementById('configError').classList.add('show');
+        throw new Error('GASのURLが設定されていません。');
+      }
+      document.getElementById('configError').classList.remove('show');
       const url = new URL(GAS_URL);
       url.searchParams.append('action', action);
       for (const [k, v] of Object.entries(params || {})) {
@@ -323,7 +353,11 @@
           requestAnimationFrame(tick);
         })
         .catch(err => {
-          scanStatus.textContent = 'カメラエラー: ' + err.name;
+          if (err.name === 'NotAllowedError' || err.name === 'SecurityError' || (err.message && err.message.indexOf('Permissions policy') !== -1)) {
+            scanStatus.innerHTML = 'カメラが許可されていません。GASのプレビューではなく、<strong>デプロイしたウェブアプリのURLを新しいタブで直接開いて</strong>ください。';
+          } else {
+            scanStatus.textContent = 'カメラエラー: ' + (err.message || err.name);
+          }
         });
     }
 

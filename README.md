@@ -39,8 +39,12 @@
 
 ### 3. フロントの利用方法
 
-- **GAS から配信**: 上記ウェブアプリのURLにアクセス。GAS_URL は自動で挿入されます。
-- **GitHub Pages など**: `standalone.html` をアップロードし、先頭付近の `const GAS_URL = "YOUR_GAS_WEB_APP_URL";` を、手順2で控えたウェブアプリのURLに差し替えてください。
+- **GAS から配信**: 上記ウェブアプリのURLを**ブラウザのアドレスバーで直接開いて**ください。GAS_URL は自動で挿入されます。  
+  **注意**: エディタの「プレビュー」や iframe 内ではカメラが許可されず QR が使えません。必ず「デプロイ」→「ウェブアプリのURL」を新しいタブで開いて利用してください。
+- **GitHub Pages**: `standalone.html` をデプロイする際、GAS の URL を次のいずれかで設定します。
+  1. **推奨**: `standalone.html` 内の `GAS_URL` の既定値（`return 'YOUR_GAS_WEB_APP_URL'` の部分）を、手順2で控えたウェブアプリのURLに書き換えてから push。
+  2. ページを開くときの URL に `?gasUrl=https://script.google.com/macros/s/.../exec` を付ける（ブックマークやリンクで利用可）。
+  3. `config.example.js` を `config.js` にコピーし URL を記入。`standalone.html` の jsQR の直前に行を追加: `<script src="config.js"></script>`。`config.js` を `.gitignore` に追加すると URL をリポジトリに含めずに済みます。
 
 ## 動作フロー
 

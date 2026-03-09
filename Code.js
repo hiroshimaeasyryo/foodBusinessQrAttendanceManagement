@@ -66,6 +66,8 @@ function doGet(e) {
   } catch (err) {
     tmpl.gasUrl = '';
   }
+  // ロゴURL（GitHub Pages 等の絶対URLを指定すると hero と favicon に表示）
+  tmpl.logoUrl = '';
   return tmpl.evaluate()
     .setTitle('出勤記録')
     .addMetaTag('viewport', 'width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no');
