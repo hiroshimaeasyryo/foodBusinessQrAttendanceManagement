@@ -5,9 +5,7 @@
   <meta charset="UTF-8" />
   <title>出勤記録｜ヨリミチ</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <? if (typeof logoUrl !== 'undefined' && logoUrl) { ?>
-  <link rel="icon" href="<?= logoUrl ?>" type="image/png">
-  <? } ?>
+  <link rel="icon" href="logo.png" type="image/png" id="favicon">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link
@@ -113,9 +111,7 @@
 <body>
   <div class="container">
     <header class="hero">
-      <? if (typeof logoUrl !== 'undefined' && logoUrl) { ?>
-      <img src="<?= logoUrl ?>" alt="ヨリミチ" class="hero-logo">
-      <? } ?>
+      <img src="logo.png" alt="ヨリミチ" class="hero-logo" id="hero-logo">
       <h1 class="hero-title">出勤記録</h1>
       <span class="hero-sub">誕生日4桁 → スタッフ選択 → QRスキャン</span>
     </header>
@@ -164,12 +160,40 @@
 
   <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
   <script>
-    var GAS_URL = "<?= typeof gasUrl !== 'undefined' ? gasUrl : '' ?>" || "YOUR_GAS_WEB_APP_URL";
+    window.__LOGO_URL__ = "<?= typeof logoUrl !== 'undefined' && logoUrl ? logoUrl : '' ?>";
+    window.__GAS_URL__ = "<?= typeof gasUrl !== 'undefined' ? gasUrl : '' ?>";
+    if (typeof window.__GAS_URL__ === 'string' && window.__GAS_URL__.indexOf('<?=') !== -1) {
+      var q = new URLSearchParams(window.location.search);
+      var fallback = (typeof window.__GAS_URL_FALLBACK__ !== 'undefined' ? window.__GAS_URL_FALLBACK__ : '');
+      if (!fallback && window.location.hostname === 'hiroshimaeasyryo.github.io') {
+        fallback = 'https://script.google.com/macros/s/AKfycby9uHvocHSTO7TfwllfdcvF6kkItIBciC6MnJJh_TJDb6hfiG7FLAeMGEV2DhNhI1Hw/exec';
+      }
+      window.__GAS_URL__ = (q.get('gasUrl') || '').trim() || fallback;
+      window.__LOGO_URL__ = 'logo.png';
+    }
+    if (window.__LOGO_URL__ && window.__LOGO_URL__.indexOf('<?=') === -1) {
+      document.addEventListener('DOMContentLoaded', function() {
+        var f = document.getElementById('favicon'); if (f) f.href = window.__LOGO_URL__;
+        var l = document.getElementById('hero-logo'); if (l) l.src = window.__LOGO_URL__;
+      });
+    }
 
+    var GAS_URL = window.__GAS_URL__ || "YOUR_GAS_WEB_APP_URL";
     var urlParams = new URLSearchParams(window.location.search);
     var placeId = urlParams.get('place') || '';
 
+    function isGasUrlValid() {
+      if (!GAS_URL || typeof GAS_URL !== 'string') return false;
+      var s = GAS_URL.trim();
+      if (!s || s === 'YOUR_GAS_WEB_APP_URL') return false;
+      try { new URL(s); return true; } catch (_) { return false; }
+    }
+
     async function callGas(action, params) {
+      if (!isGasUrlValid()) {
+        console.error('GASのURLが設定されていません。');
+        throw new Error('GASのURLが設定されていません。');
+      }
       var url = new URL(GAS_URL);
       url.searchParams.append('action', action);
       for (var k in params || {}) {
