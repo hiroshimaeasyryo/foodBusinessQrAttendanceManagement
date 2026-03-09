@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="ja">
+
+<head>
+  <meta charset="UTF-8" />
+  <title>出勤記録</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link
+    href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Noto+Sans+JP:wght@400;500;700&display=swap"
+    rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+
+  <style>
+    :root {
+      --primary: #4F46E5;
+      --primary-dark: #4338CA;
+      --success: #10B981;
+      --error: #EF4444;
+      --bg: #F9FAFB;
+      --card-bg: #FFFFFF;
+      --text-main: #111827;
+      --text-sub: #6B7280;
+      --border: #E5E7EB;
+      --gap: 16px;
+      --radius: 12px;
+    }
+
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; padding: 0; width: 100%; max-width: 100%; overflow-x: hidden;
+      font-family: 'Inter', 'Noto Sans JP', sans-serif; background: var(--bg); color: var(--text-main);
+      min-height: 100vh; display: flex; flex-direction: column; align-items: center; padding-bottom: 40px; }
+
+    .container { width: 100%; max-width: 420px; padding: 20px 16px; display: flex; flex-direction: column; gap: 24px; }
+
+    header { text-align: center; margin-bottom: 8px; }
+    header h1 { font-size: 1.2rem; color: var(--text-main); }
+    header span { font-size: 0.8rem; color: var(--text-sub); }
+
+    .card { background: var(--card-bg); border-radius: var(--radius); box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      padding: 20px; border: 1px solid var(--border); transition: all 0.3s ease; }
+    .card.active { border-color: var(--primary); box-shadow: 0 4px 6px -1px rgba(79,70,229,0.1); }
+
+    .card-title { font-size: 0.95rem; font-weight: 600; color: var(--text-sub); margin-bottom: 12px;
+      display: flex; align-items: center; gap: 6px; }
+    .card-title.active { color: var(--primary); }
+
+    .refresh-btn { background: none; border: none; color: var(--text-sub); cursor: pointer; padding: 4px 8px;
+      border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; }
+    .refresh-btn:hover { color: var(--primary); background: var(--bg); }
+    .refresh-btn.spinning i { animation: spin 1s linear infinite; }
+
+    .birth-input { width: 100%; padding: 16px; font-size: 1.5rem; letter-spacing: 4px; text-align: center;
+      border: 2px solid var(--border); border-radius: 8px; background: #fff; appearance: none; -moz-appearance: textfield; }
+    .birth-input:focus { outline: none; border-color: var(--primary); }
+    .birth-input::placeholder { letter-spacing: 2px; color: #D1D5DB; }
+
+    .staff-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    .staff-btn { background: #F3F4F6; border: 2px solid transparent; padding: 10px 12px; border-radius: 12px;
+      font-size: 0.95rem; font-weight: 600; color: var(--text-main); cursor: pointer; transition: all 0.2s;
+      display: flex; align-items: center; gap: 10px; text-align: left; }
+    .staff-btn:active { transform: scale(0.98); }
+    .staff-btn.selected { background: #EEF2FF; border-color: var(--primary); color: var(--primary); }
+    .staff-btn .avatar { width: 36px; height: 36px; border-radius: 50%; background: #D1D5DB;
+      display: flex; align-items: center; justify-content: center; flex-shrink: 0; color: #6B7280; font-weight: 700; }
+    .staff-btn .avatar.bg-1 { background: #6366F1; color: #fff; }
+    .staff-btn .avatar.bg-2 { background: #EC4899; color: #fff; }
+    .staff-btn .avatar.bg-3 { background: #10B981; color: #fff; }
+    .staff-btn .avatar.bg-4 { background: #F59E0B; color: #fff; }
+    .staff-btn .avatar.bg-5 { background: #3B82F6; color: #fff; }
+
+    .shift-options { margin-bottom: 16px; }
+    .shift-options label { display: block; margin-bottom: 8px; font-size: 0.9rem; color: var(--text-sub); }
+    .shift-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+    .shift-btn { padding: 12px 16px; border: 2px solid var(--border); background: #fff; border-radius: 10px;
+      font-weight: 600; color: var(--text-sub); cursor: pointer; flex: 1; min-width: 120px; text-align: center; }
+    .shift-btn.active { border-color: var(--primary); background: #EEF2FF; color: var(--primary); }
+    .irregular-row { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+    .irregular-row label { font-size: 0.85rem; color: var(--text-sub); }
+    .irregular-row input { width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px;
+      margin-top: 4px; font-size: 0.95rem; }
+    .irregular-hint { font-size: 0.75rem; color: var(--text-sub); margin-top: 4px; }
+    .camera-box { position: relative; width: 100%; padding-bottom: 100%; background: #000; border-radius: 16px; overflow: hidden; }
+    #video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
+    .scan-line { position: absolute; width: 100%; height: 2px; background: var(--success); top: 0; z-index: 10;
+      opacity: 0; pointer-events: none; }
+    .scan-line.active { opacity: 1; animation: scanAnim 2.5s infinite linear; }
+    @keyframes scanAnim { 0% { top: 0; opacity: 0; } 10% { opacity: 1; } 90% { opacity: 1; } 100% { top: 100%; opacity: 0; } }
+    @keyframes spin { 100% { transform: rotate(360deg); } }
+
+    #toast { position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%) translateY(100px);
+      background: rgba(17,24,39,0.95); color: white; padding: 14px 24px; border-radius: 40px; font-weight: 600;
+      display: flex; align-items: center; gap: 10px; white-space: nowrap; transition: transform 0.4s cubic-bezier(0.175,0.885,0.32,1.275); z-index: 1000; }
+    #toast.show { transform: translateX(-50%) translateY(0); }
+    #toast.success { background: var(--success); }
+    #toast.error { background: var(--error); }
+
+    .disabled-section { opacity: 0.5; pointer-events: none; filter: grayscale(80%); }
+    .spinner { width: 18px; height: 18px; border: 2px solid #ddd; border-top-color: var(--primary);
+      border-radius: 50%; animation: spin 0.8s linear infinite; display: inline-block; vertical-align: middle; margin-right: 6px; }
+    .hint { font-size: 0.85rem; color: var(--text-sub); margin-bottom: 8px; }
+  </style>
+</head>
+
+<body>
+  <div class="container">
+    <header>
+      <h1>出勤記録</h1>
+      <span>誕生日4桁 → スタッフ選択 → QRスキャン</span>
+    </header>
+
+    <section class="card active" id="sec-birth">
+      <div class="card-title active" style="justify-content: space-between;">
+        <span>STEP 1: 誕生日を入力</span>
+        <button class="refresh-btn" id="refreshBtn" title="キャッシュ更新" onclick="refreshCache()">
+          <i class="fa-solid fa-sync-alt"></i>
+        </button>
+      </div>
+      <p class="hint">月日4桁 (例: 0315)</p>
+      <input id="birthInput" type="tel" class="birth-input" placeholder="0315" maxlength="4" inputmode="numeric" autocomplete="off" />
+      <div id="candidateArea" class="staff-grid" style="margin-top: 12px; display: none;"></div>
+      <div id="noCandidate" style="display: none; text-align: center; color: var(--text-sub); margin-top: 8px;">該当するスタッフがいません</div>
+    </section>
+
+    <section class="card disabled-section" id="sec-staff">
+      <div class="card-title">STEP 2: スタッフ確認・勤務時間</div>
+      <div id="selectedStaffName" style="font-weight: 700; margin-bottom: 12px;"></div>
+      <div id="shiftSection" style="display: none;">
+        <div class="shift-options" id="shiftOptions"></div>
+        <div class="irregular-row" id="irregularRow">
+          <label>イレギュラー時（任意）</label>
+          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+            <div><label class="irregular-hint">出勤時刻</label><input id="irregularStart" placeholder="11:00" /></div>
+            <div><label class="irregular-hint">退勤時刻(24時超は25:00等)</label><input id="irregularEnd" placeholder="24:00" /></div>
+          </div>
+          <div style="margin-top: 8px;"><label class="irregular-hint">休憩(分)</label><input id="irregularBreak" type="number" placeholder="120" min="0" /></div>
+        </div>
+      </div>
+      <div id="gyomuNote" style="display: none; color: var(--text-sub); font-size: 0.9rem;">業務委託のため記録は行いません。QRスキャンのみで完了します。</div>
+    </section>
+
+    <section class="card disabled-section" id="sec-scan">
+      <div class="card-title">STEP 3: QRコードをスキャン</div>
+      <div class="camera-box">
+        <video id="video" autoplay muted playsinline></video>
+        <div class="scan-line" id="scanLine"></div>
+      </div>
+      <div id="scanStatus" style="text-align: center; margin-top: 12px; font-weight: bold; min-height: 1.2em;"></div>
+    </section>
+  </div>
+
+  <div id="toast"><span id="toastIcon"></span><span id="toastMsg"></span></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+  <script>
+    var GAS_URL = "<?= typeof gasUrl !== 'undefined' ? gasUrl : '' ?>" || "YOUR_GAS_WEB_APP_URL";
+
+    var urlParams = new URLSearchParams(window.location.search);
+    var placeId = urlParams.get('place') || '';
+
+    async function callGas(action, params) {
+      var url = new URL(GAS_URL);
+      url.searchParams.append('action', action);
+      for (var k in params || {}) {
+        var v = params[k];
+        url.searchParams.append(k, typeof v === 'object' ? JSON.stringify(v) : v);
+      }
+      var ctrl = new AbortController();
+      var tid = setTimeout(function() { ctrl.abort(); }, 30000);
+      try {
+        var res = await fetch(url.toString(), { method: 'GET', mode: 'cors', credentials: 'omit', signal: ctrl.signal });
+        clearTimeout(tid);
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        return await res.json();
+      } catch (e) {
+        clearTimeout(tid);
+        if (e.name === 'AbortError') throw new Error('通信タイムアウト');
+        throw new Error('通信エラー');
+      }
+    }
+
+    var staffList = [];
+    var birthKeyToStaff = {};
+    var selectedStaff = null;
+    var scanning = false;
+    var shiftType = 'default_11';
+
+    var birthInput = document.getElementById('birthInput');
+    var candidateArea = document.getElementById('candidateArea');
+    var noCandidate = document.getElementById('noCandidate');
+    var secStaff = document.getElementById('sec-staff');
+    var secScan = document.getElementById('sec-scan');
+    var selectedStaffName = document.getElementById('selectedStaffName');
+    var shiftSection = document.getElementById('shiftSection');
+    var shiftOptions = document.getElementById('shiftOptions');
+    var irregularRow = document.getElementById('irregularRow');
+    var gyomuNote = document.getElementById('gyomuNote');
+    var video = document.getElementById('video');
+    var scanLine = document.getElementById('scanLine');
+    var scanStatus = document.getElementById('scanStatus');
+
+    function buildBirthKeyMap(list) {
+      var map = {};
+      list.forEach(function(s) {
+        if (!s.birthKey) return;
+        if (!map[s.birthKey]) map[s.birthKey] = [];
+        map[s.birthKey].push(s);
+      });
+      return map;
+    }
+
+    async function loadStaff() {
+      try {
+        staffList = await callGas('getStaffList');
+        birthKeyToStaff = buildBirthKeyMap(staffList);
+        return true;
+      } catch (e) {
+        console.error(e);
+        return false;
+      }
+    }
+
+    document.addEventListener('DOMContentLoaded', async function() {
+      candidateArea.innerHTML = '<div style="grid-column:1/-1;text-align:center;color:var(--text-sub);"><span class="spinner"></span> 読み込み中...</div>';
+      var ok = await loadStaff();
+      if (!ok) {
+        candidateArea.innerHTML = '<div style="grid-column:1/-1;color:var(--error);">スタッフ一覧の取得に失敗しました</div>';
+        return;
+      }
+      candidateArea.innerHTML = '';
+      candidateArea.style.display = 'none';
+      noCandidate.style.display = 'none';
+      birthInput.placeholder = '0315';
+      birthInput.focus();
+    });
+
+    birthInput.addEventListener('input', function(e) {
+      var val = e.target.value.replace(/\D/g, '').slice(0, 4);
+      e.target.value = val;
+      candidateArea.style.display = 'none';
+      noCandidate.style.display = 'none';
+      if (val.length !== 4) return;
+      var candidates = birthKeyToStaff[val] || [];
+      if (candidates.length === 0) {
+        noCandidate.style.display = 'block';
+        candidateArea.style.display = 'none';
+        return;
+      }
+      noCandidate.style.display = 'none';
+      candidateArea.innerHTML = '';
+      candidateArea.style.display = 'grid';
+      candidates.forEach(function(staff) {
+        var btn = document.createElement('div');
+        btn.className = 'staff-btn';
+        var colorIdx = (staff.name.charCodeAt(0) % 5) + 1;
+        btn.innerHTML = '<div class="avatar bg-' + colorIdx + '">' + (staff.name.charAt(0) || '?') + '</div><span>' + escapeHtml(staff.name) + '</span>';
+        btn.onclick = function() { selectStaff(staff, btn); };
+        candidateArea.appendChild(btn);
+      });
+    });
+
+    function escapeHtml(s) {
+      var d = document.createElement('div');
+      d.textContent = s;
+      return d.innerHTML;
+    }
+
+    function selectStaff(staff, btnEl) {
+      document.querySelectorAll('#candidateArea .staff-btn').forEach(function(b) { b.classList.remove('selected'); });
+      if (btnEl) btnEl.classList.add('selected');
+      selectedStaff = staff;
+      selectedStaffName.textContent = staff.name + ' (' + (staff.property || '') + ')';
+      secStaff.classList.remove('disabled-section');
+      shiftSection.style.display = 'none';
+      shiftOptions.innerHTML = '';
+      gyomuNote.style.display = 'none';
+      if (staff.property === '社員') {
+        shiftSection.style.display = 'block';
+        shiftType = 'default_11';
+        shiftOptions.innerHTML = '<label>勤務パターン</label><div class="shift-row">' +
+          '<button type="button" class="shift-btn active" data-shift="default_11">11:00-24:00 (2h休憩)</button>' +
+          '<button type="button" class="shift-btn" data-shift="default_18">18:00-24:00 (休憩なし)</button></div>';
+        shiftOptions.querySelectorAll('.shift-btn').forEach(function(b) {
+          b.onclick = function() {
+            shiftOptions.querySelectorAll('.shift-btn').forEach(function(x) { x.classList.remove('active'); });
+            b.classList.add('active');
+            shiftType = b.dataset.shift;
+          };
+        });
+      } else if (staff.property === '契約社員') {
+        shiftSection.style.display = 'block';
+        shiftType = 'default_18';
+        shiftOptions.innerHTML = '<label>デフォルト: 18:00-24:00 (休憩なし)</label>';
+      }
+      if (staff.property === '業務委託') gyomuNote.style.display = 'block';
+      secScan.classList.remove('disabled-section');
+      scanStatus.textContent = 'QRコードを読み取ってください';
+      secScan.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    function startCamera() {
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        scanStatus.textContent = 'カメラが使えません';
+        return;
+      }
+      navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+        .then(function(stream) {
+          video.srcObject = stream;
+          video.play();
+          scanning = true;
+          scanLine.classList.add('active');
+          requestAnimationFrame(tick);
+        })
+        .catch(function(err) { scanStatus.textContent = 'カメラエラー: ' + err.name; });
+    }
+
+    function stopCamera() {
+      if (video.srcObject) video.srcObject.getTracks().forEach(function(t) { t.stop(); });
+      scanning = false;
+      scanLine.classList.remove('active');
+    }
+
+    function tick() {
+      if (!scanning) return;
+      if (video.readyState >= 2) {
+        var c = document.createElement('canvas');
+        c.width = video.videoWidth;
+        c.height = video.videoHeight;
+        var ctx = c.getContext('2d');
+        ctx.drawImage(video, 0, 0, c.width, c.height);
+        var code = jsQR(ctx.getImageData(0, 0, c.width, c.height).data, c.width, c.height);
+        if (code) handleQr(code.data);
+      }
+      requestAnimationFrame(tick);
+    }
+
+    async function handleQr(qrData) {
+      scanning = false;
+      stopCamera();
+      scanStatus.textContent = '送信中...';
+      var payload = {
+        uuid: selectedStaff.uuid,
+        name: selectedStaff.name,
+        property: selectedStaff.property || '',
+        shiftType: selectedStaff.property === '社員' ? shiftType : undefined,
+        startTime: document.getElementById('irregularStart').value.trim() || undefined,
+        endTime: document.getElementById('irregularEnd').value.trim() || undefined,
+        breakMinutes: document.getElementById('irregularBreak').value.trim() || undefined
+      };
+      try {
+        var res = await callGas('recordTimestamp', { payload: payload });
+        if (res.ok) {
+          showToast(res.message, 'success');
+          scanStatus.textContent = '完了';
+          setTimeout(resetApp, 3000);
+        } else {
+          showToast(res.message || '失敗', 'error');
+          setTimeout(function() { scanning = true; startCamera(); }, 2000);
+        }
+      } catch (err) {
+        showToast('エラー: ' + err.message, 'error');
+        setTimeout(function() { scanning = true; startCamera(); }, 2000);
+      }
+    }
+
+    secScan.addEventListener('click', function() { if (!scanning && selectedStaff) startCamera(); });
+
+    function showToast(msg, type) {
+      var t = document.getElementById('toast');
+      document.getElementById('toastMsg').textContent = msg;
+      t.className = type === 'success' ? 'success' : 'error';
+      document.getElementById('toastIcon').innerHTML = type === 'success' ? '<i class="fa-solid fa-circle-check"></i>' : '<i class="fa-solid fa-triangle-exclamation"></i>';
+      t.classList.add('show');
+      setTimeout(function() { t.classList.remove('show'); }, 4000);
+    }
+
+    function resetApp() {
+      selectedStaff = null;
+      birthInput.value = '';
+      candidateArea.innerHTML = '';
+      candidateArea.style.display = 'none';
+      noCandidate.style.display = 'none';
+      selectedStaffName.textContent = '';
+      document.getElementById('irregularStart').value = '';
+      document.getElementById('irregularEnd').value = '';
+      document.getElementById('irregularBreak').value = '';
+      secStaff.classList.add('disabled-section');
+      secScan.classList.add('disabled-section');
+      scanStatus.textContent = '';
+      stopCamera();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    }
+
+    async function refreshCache() {
+      var btn = document.getElementById('refreshBtn');
+      btn.classList.add('spinning');
+      try {
+        await callGas('clearStaffCache');
+        await loadStaff();
+        showToast('キャッシュを更新しました', 'success');
+      } catch (e) {
+        showToast('エラー: ' + e.message, 'error');
+      }
+      btn.classList.remove('spinning');
+    }
+  </script>
+</body>
+
+</html>
