@@ -201,7 +201,7 @@ function getDefaultTimes(property, shiftType) {
  * 打刻を記録
  * payload: {
  *   uuid, name, property,
- *   startTime?, endTime?, breakMinutes? (イレギュラー用),
+ *   startTime?, endTime?, breakMinutes? (イレギュラー用・分。シートには時間に換算して記録),
  *   shiftType? ('default_11' | 'default_18') 社員用
  * }
  * 業務委託の場合は何も記録しない。
@@ -238,11 +238,13 @@ function recordTimestamp(payload) {
   if (endTime == null) endTime = '';
   if (breakMinutes == null || breakMinutes === '') breakMinutes = 0;
   breakMinutes = Number(breakMinutes) || 0;
+  // シートへは時間単位で記録（入力は分のまま: 90分 → 1.5）
+  const breakHours = breakMinutes / 60;
 
   const now = new Date();
   const dateStr = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd');
 
-  // 打刻記録シート: タイムスタンプ, スタッフID, 氏名, 出勤時刻, 退勤時刻, 休憩時間
+  // 打刻記録シート: タイムスタンプ, スタッフID, 氏名, 出勤時刻, 退勤時刻, 休憩時間(時間)
   var rowBefore = tsSheet.getLastRow();
   try {
     tsSheet.appendRow([
@@ -251,7 +253,7 @@ function recordTimestamp(payload) {
       payload.name || '',
       startTime,
       endTime,
-      breakMinutes
+      breakHours
     ]);
   } catch (appendErr) {
     return {
@@ -284,7 +286,7 @@ function recordTimestamp(payload) {
         dateStr,
         startTime,
         endTime,
-        breakMinutes
+        breakHours
       ]]);
     }
   }
