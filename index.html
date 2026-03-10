@@ -238,7 +238,6 @@
     var GAS_URL = window.__GAS_URL__ || "YOUR_GAS_WEB_APP_URL";
     var urlParams = new URLSearchParams(window.location.search);
     var placeId = urlParams.get('place') || '';
-    if (typeof console !== 'undefined' && console.log) console.log('[AccessControlFoodBusiness] GAS_URL:', GAS_URL);
 
     function isGasUrlValid() {
       if (!GAS_URL || typeof GAS_URL !== 'string') return false;
@@ -436,7 +435,7 @@
         shiftSection.style.display = 'block';
         shiftType = 'default_18';
         shiftOptions.innerHTML = '<label>勤務パターン</label><div class="shift-row">' +
-          '<button type="button" class="shift-btn active" style="pointer-events:none;">18:00-24:00 (休憩なし)</button></div>' +
+          '<button type="button" class="shift-btn active" style="pointer-events:none;">18:00-22:00 (休憩なし)</button></div>' +
           '<p class="hint" id="autoScanHint">このまま続行します…</p>';
         secStaff.scrollIntoView({ behavior: 'smooth', block: 'start' });
         scanRevealTimer = setTimeout(goToScanSection, 1600);

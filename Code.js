@@ -5,7 +5,6 @@
 const SPREADSHEET_ID = '1BzM547ikvZIjXLEQBktuRxeU0UaiPH7Td1m80tBoSGE';
 const STAFF_SHEET_NAME = 'スタッフDB';
 const TIMESTAMP_SHEET_NAME = '打刻記録';
-const BACKEND_VERSION = '2026-03-10_break-hours';
 
 function getSpreadsheet() {
   return SpreadsheetApp.openById(SPREADSHEET_ID);
@@ -183,11 +182,11 @@ function verifyStaff(uuid, birthdateStr) {
 /**
  * 属性に応じたデフォルト時刻を返す
  * 社員: shiftType 'default_11' => 11:00-24:00 2h休憩, 'default_18' => 18:00-24:00 休憩なし
- * 契約社員: 18:00-24:00 休憩なし
+ * 契約社員: 18:00-22:00 休憩なし
  */
 function getDefaultTimes(property, shiftType) {
   if (property === '契約社員') {
-    return { start: '18:00', end: '24:00', breakMinutes: 0 };
+    return { start: '18:00', end: '22:00', breakMinutes: 0 };
   }
   if (property === '社員') {
     if (shiftType === 'default_18') {
@@ -296,12 +295,10 @@ function recordTimestamp(payload) {
     ok: true,
     message: '出勤記録を保存しました',
     recorded: true,
-    backendVersion: BACKEND_VERSION,
     row: rowAfter,
     timestamp: Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss'),
     startTime: startTime,
     endTime: endTime,
-    breakMinutes: breakMinutes,
-    recordedBreakHours: breakHours
+    breakMinutes: breakMinutes
   };
 }
