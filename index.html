@@ -57,7 +57,7 @@
     .birth-input:focus { outline: none; border-color: var(--primary); }
     .birth-input::placeholder { letter-spacing: 2px; color: #D1D5DB; }
 
-    .staff-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    .staff-grid { display: grid; grid-template-columns: 1fr; gap: 10px; }
     .staff-btn { background: #F3F4F6; border: 2px solid transparent; padding: 10px 12px; border-radius: 12px;
       font-size: 0.95rem; font-weight: 600; color: var(--text-main); cursor: pointer; transition: all 0.2s;
       display: flex; align-items: center; gap: 10px; text-align: left; }
@@ -73,15 +73,46 @@
 
     .shift-options { margin-bottom: 16px; }
     .shift-options label { display: block; margin-bottom: 8px; font-size: 0.9rem; color: var(--text-sub); }
-    .shift-row { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
-    .shift-btn { padding: 12px 16px; border: 2px solid var(--border); background: #fff; border-radius: 10px;
-      font-weight: 600; color: var(--text-sub); cursor: pointer; flex: 1; min-width: 120px; text-align: center; }
+    .shift-row { display: flex; flex-direction: column; gap: 10px; margin-bottom: 8px; }
+    .shift-btn { padding: 14px 16px; border: 2px solid var(--border); background: #fff; border-radius: 10px;
+      font-weight: 600; color: var(--text-sub); cursor: pointer; width: 100%; text-align: center;
+      min-height: 48px; display: flex; align-items: center; justify-content: center; }
     .shift-btn.active { border-color: var(--primary); background: #EEF2FF; color: var(--primary); }
-    .irregular-row { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
-    .irregular-row label { font-size: 0.85rem; color: var(--text-sub); }
-    .irregular-row input { width: 100%; padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px;
-      margin-top: 4px; font-size: 0.95rem; }
-    .irregular-hint { font-size: 0.75rem; color: var(--text-sub); margin-top: 4px; }
+    .form-field { margin-bottom: 14px; }
+    .form-field label { display: block; font-size: 0.85rem; color: var(--text-sub); margin-bottom: 6px; font-weight: 500; }
+    .form-field .field-hint { font-size: 0.72rem; color: var(--text-sub); margin-top: 4px; }
+    .digit-group { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    .digit-slots { display: inline-flex; gap: 6px; align-items: center; }
+    .digit-slot { width: 2.2rem; height: 2.6rem; border: 2px solid var(--border); border-radius: 8px;
+      display: flex; align-items: center; justify-content: center; font-size: 1.1rem; font-weight: 700;
+      background: #fff; color: var(--text-main); }
+    .digit-slot.filled { border-color: var(--primary); background: #EEF2FF; }
+    .digit-input-wrap { position: relative; flex: 1; min-width: 0; max-width: 100%; }
+    .digit-input-wrap input.digit-input { width: 100%; padding: 12px 14px; border: 2px solid var(--border); border-radius: 8px;
+      font-size: 1.25rem; letter-spacing: 0.25em; text-align: center; font-weight: 600; }
+    .digit-input-wrap input.digit-input:focus { outline: none; border-color: var(--primary); }
+    .digit-preview { font-size: 0.9rem; color: var(--primary); font-weight: 600; margin-left: 4px; }
+    .irregular-toggle-wrap { margin-top: 16px; }
+    .irregular-toggle {
+      width: 100%; display: flex; align-items: center; justify-content: space-between; gap: 12px;
+      padding: 14px 16px; border: 2px solid var(--border); border-radius: 12px; background: #F9FAFB;
+      cursor: pointer; font-size: 0.95rem; font-weight: 600; color: var(--text-main);
+      transition: border-color 0.2s, background 0.2s;
+    }
+    .irregular-toggle:hover { border-color: #C7D2FE; background: #EEF2FF; }
+    .irregular-toggle.on { border-color: var(--primary); background: #EEF2FF; color: var(--primary); }
+    .irregular-toggle .toggle-track {
+      width: 44px; height: 26px; border-radius: 13px; background: #D1D5DB; flex-shrink: 0;
+      position: relative; transition: background 0.2s;
+    }
+    .irregular-toggle.on .toggle-track { background: var(--primary); }
+    .irregular-toggle .toggle-knob {
+      position: absolute; width: 22px; height: 22px; border-radius: 50%; background: #fff; top: 2px; left: 2px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.2); transition: transform 0.2s;
+    }
+    .irregular-toggle.on .toggle-knob { transform: translateX(18px); }
+    .irregular-panel { display: none; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--border); }
+    .irregular-panel.open { display: block; }
     .camera-box { position: relative; width: 100%; padding-bottom: 100%; background: #000; border-radius: 16px; overflow: hidden; }
     #video { position: absolute; top: 0; left: 0; width: 100%; height: 100%; object-fit: cover; }
     .scan-line { position: absolute; width: 100%; height: 2px; background: var(--success); top: 0; z-index: 10;
@@ -134,13 +165,38 @@
       <div id="selectedStaffName" style="font-weight: 700; margin-bottom: 12px;"></div>
       <div id="shiftSection" style="display: none;">
         <div class="shift-options" id="shiftOptions"></div>
-        <div class="irregular-row" id="irregularRow">
-          <label>イレギュラー時（任意）</label>
-          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
-            <div><label class="irregular-hint">出勤時刻</label><input id="irregularStart" placeholder="11:00" /></div>
-            <div><label class="irregular-hint">退勤時刻(24時超は25:00等)</label><input id="irregularEnd" placeholder="24:00" /></div>
+        <div class="irregular-toggle-wrap">
+          <button type="button" class="irregular-toggle" id="irregularToggle" aria-expanded="false">
+            <span>イレギュラー勤務を入力する（任意）</span>
+            <span class="toggle-track"><span class="toggle-knob"></span></span>
+          </button>
+          <div class="irregular-panel" id="irregularPanel">
+            <p class="hint" style="margin-bottom:12px;">時刻は4桁（例 1100→11:00、2500→25:00）。休憩は2〜3桁の分。</p>
+            <div class="form-field">
+              <label>出勤時刻 <span class="digit-preview" id="previewStart"></span></label>
+              <div class="digit-input-wrap">
+                <input type="tel" class="digit-input" id="irregularStartDigits" maxlength="4" inputmode="numeric" placeholder="1100" autocomplete="off" />
+              </div>
+              <div class="field-hint">4桁：HHMM（24時超は25:00表記なら 2500）</div>
+            </div>
+            <div class="form-field">
+              <label>退勤時刻 <span class="digit-preview" id="previewEnd"></span></label>
+              <div class="digit-input-wrap">
+                <input type="tel" class="digit-input" id="irregularEndDigits" maxlength="4" inputmode="numeric" placeholder="2400" autocomplete="off" />
+              </div>
+              <div class="field-hint">4桁：HHMM</div>
+            </div>
+            <div class="form-field" style="margin-bottom:0;">
+              <label>休憩（分） <span class="digit-preview" id="previewBreak"></span></label>
+              <div class="digit-input-wrap">
+                <input type="tel" class="digit-input" id="irregularBreakDigits" maxlength="3" inputmode="numeric" placeholder="120" autocomplete="off" />
+              </div>
+              <div class="field-hint">2〜3桁の分数（例 120）</div>
+            </div>
+            <input type="hidden" id="irregularStart" />
+            <input type="hidden" id="irregularEnd" />
+            <input type="hidden" id="irregularBreak" />
           </div>
-          <div style="margin-top: 8px;"><label class="irregular-hint">休憩(分)</label><input id="irregularBreak" type="number" placeholder="120" min="0" /></div>
         </div>
       </div>
       <div id="gyomuNote" style="display: none; color: var(--text-sub); font-size: 0.9rem;">業務委託のため記録は行いません。QRスキャンのみで完了します。</div>
@@ -253,7 +309,6 @@
     var selectedStaffName = document.getElementById('selectedStaffName');
     var shiftSection = document.getElementById('shiftSection');
     var shiftOptions = document.getElementById('shiftOptions');
-    var irregularRow = document.getElementById('irregularRow');
     var gyomuNote = document.getElementById('gyomuNote');
     var video = document.getElementById('video');
     var scanLine = document.getElementById('scanLine');
@@ -317,6 +372,9 @@
         btn.onclick = function() { selectStaff(staff, btn); };
         candidateArea.appendChild(btn);
       });
+      if (candidates.length === 1) {
+        selectStaff(candidates[0], null);
+      }
     });
 
     function escapeHtml(s) {
@@ -325,7 +383,14 @@
       return d.innerHTML;
     }
 
+    var scanRevealTimer = null;
+    function goToScanSection() {
+      secScan.classList.remove('disabled-section');
+      scanStatus.textContent = 'QRコードを読み取ってください';
+      secScan.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
     function selectStaff(staff, btnEl) {
+      if (scanRevealTimer) { clearTimeout(scanRevealTimer); scanRevealTimer = null; }
       document.querySelectorAll('#candidateArea .staff-btn').forEach(function(b) { b.classList.remove('selected'); });
       if (btnEl) btnEl.classList.add('selected');
       selectedStaff = staff;
@@ -334,28 +399,39 @@
       shiftSection.style.display = 'none';
       shiftOptions.innerHTML = '';
       gyomuNote.style.display = 'none';
+      secScan.classList.add('disabled-section');
+      if (staff.property === '業務委託') {
+        gyomuNote.style.display = 'block';
+        goToScanSection();
+        return;
+      }
       if (staff.property === '社員') {
         shiftSection.style.display = 'block';
         shiftType = 'default_11';
-        shiftOptions.innerHTML = '<label>勤務パターン</label><div class="shift-row">' +
+        shiftOptions.innerHTML = '<label>勤務パターン（デフォルトを確認のうえQRへ）</label><div class="shift-row">' +
           '<button type="button" class="shift-btn active" data-shift="default_11">11:00-24:00 (2h休憩)</button>' +
-          '<button type="button" class="shift-btn" data-shift="default_18">18:00-24:00 (休憩なし)</button></div>';
+          '<button type="button" class="shift-btn" data-shift="default_18">18:00-24:00 (休憩なし)</button></div>' +
+          '<p class="hint" id="autoScanHint" style="margin-top:10px;">このまま続行します…</p>';
         shiftOptions.querySelectorAll('.shift-btn').forEach(function(b) {
           b.onclick = function() {
             shiftOptions.querySelectorAll('.shift-btn').forEach(function(x) { x.classList.remove('active'); });
             b.classList.add('active');
             shiftType = b.dataset.shift;
+            if (scanRevealTimer) clearTimeout(scanRevealTimer);
+            scanRevealTimer = setTimeout(goToScanSection, 1600);
           };
         });
+        secStaff.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        scanRevealTimer = setTimeout(goToScanSection, 1600);
       } else if (staff.property === '契約社員') {
         shiftSection.style.display = 'block';
         shiftType = 'default_18';
-        shiftOptions.innerHTML = '<label>デフォルト: 18:00-24:00 (休憩なし)</label>';
+        shiftOptions.innerHTML = '<label>勤務パターン</label><div class="shift-row">' +
+          '<button type="button" class="shift-btn active" style="pointer-events:none;">18:00-24:00 (休憩なし)</button></div>' +
+          '<p class="hint" id="autoScanHint">このまま続行します…</p>';
+        secStaff.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        scanRevealTimer = setTimeout(goToScanSection, 1600);
       }
-      if (staff.property === '業務委託') gyomuNote.style.display = 'block';
-      secScan.classList.remove('disabled-section');
-      scanStatus.textContent = 'QRコードを読み取ってください';
-      secScan.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
 
     function startCamera() {
@@ -394,10 +470,46 @@
       requestAnimationFrame(tick);
     }
 
+    function digitsToTime(str) {
+      var d = String(str || '').replace(/\D/g, '');
+      if (d.length !== 4) return '';
+      return d.slice(0, 2) + ':' + d.slice(2, 4);
+    }
+    function syncIrregularHidden() {
+      var s = digitsToTime(document.getElementById('irregularStartDigits').value);
+      var e = digitsToTime(document.getElementById('irregularEndDigits').value);
+      var b = document.getElementById('irregularBreakDigits').value.replace(/\D/g, '');
+      document.getElementById('irregularStart').value = s;
+      document.getElementById('irregularEnd').value = e;
+      document.getElementById('irregularBreak').value = b || '';
+      var ps = document.getElementById('previewStart');
+      var pe = document.getElementById('previewEnd');
+      var pb = document.getElementById('previewBreak');
+      if (ps) ps.textContent = s ? '→ ' + s : '';
+      if (pe) pe.textContent = e ? '→ ' + e : '';
+      if (pb) pb.textContent = b ? '→ ' + b + '分' : '';
+    }
+    document.getElementById('irregularToggle').addEventListener('click', function() {
+      var panel = document.getElementById('irregularPanel');
+      var on = !panel.classList.contains('open');
+      panel.classList.toggle('open', on);
+      this.classList.toggle('on', on);
+      this.setAttribute('aria-expanded', on ? 'true' : 'false');
+    });
+    ['irregularStartDigits', 'irregularEndDigits', 'irregularBreakDigits'].forEach(function(id) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener('input', function(e) {
+        e.target.value = e.target.value.replace(/\D/g, '').slice(0, id === 'irregularBreakDigits' ? 3 : 4);
+        syncIrregularHidden();
+      });
+    });
+
     async function handleQr(qrData) {
       scanning = false;
       stopCamera();
-      scanStatus.textContent = '送信中...';
+      scanStatus.textContent = '送信中…';
+      syncIrregularHidden();
       var payload = {
         uuid: selectedStaff.uuid,
         name: selectedStaff.name,
@@ -444,6 +556,13 @@
       document.getElementById('irregularStart').value = '';
       document.getElementById('irregularEnd').value = '';
       document.getElementById('irregularBreak').value = '';
+      document.getElementById('irregularStartDigits').value = '';
+      document.getElementById('irregularEndDigits').value = '';
+      document.getElementById('irregularBreakDigits').value = '';
+      document.getElementById('irregularPanel').classList.remove('open');
+      document.getElementById('irregularToggle').classList.remove('on');
+      document.getElementById('irregularToggle').setAttribute('aria-expanded', 'false');
+      syncIrregularHidden();
       secStaff.classList.add('disabled-section');
       secScan.classList.add('disabled-section');
       scanStatus.textContent = '';

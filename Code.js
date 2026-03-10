@@ -259,7 +259,9 @@ function recordTimestamp(payload) {
       const lastRow = staffSheet.getLastRow();
       const headerRows = 2;
       const nextRow = Math.max(lastRow + 1, headerRows + 1);
-      staffSheet.getRange(nextRow, 1, nextRow, 4).setValues([[
+      // getRange(row, column, numRows, numColumns) — 第3・4引数は「行数・列数」。1行4列に誤って nextRow を渡すと
+      // 「データは1行だが範囲は nextRow 行」エラーになるため、numRows=1, numColumns=4 で指定する
+      staffSheet.getRange(nextRow, 1, 1, 4).setValues([[
         dateStr,
         startTime,
         endTime,
