@@ -1,0 +1,9 @@
+node_modules/**
+.git/**
+docs/**
+*.md
+standalone.html
+config.example.js
+config.js
+logo.png
+ヨリミチロゴ.png

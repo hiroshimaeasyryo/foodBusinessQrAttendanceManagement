@@ -189,20 +189,45 @@
       try { new URL(s); return true; } catch (_) { return false; }
     }
 
-    async function callGas(action, params) {
-      if (!isGasUrlValid()) {
-        console.error('GASのURLが設定されていません。');
-        throw new Error('GASのURLが設定されていません。');
-      }
-      var url = new URL(GAS_URL);
+    function buildGasUrl(action, params) {
+      var url = new URL(GAS_URL.trim());
       url.searchParams.append('action', action);
       for (var k in params || {}) {
         var v = params[k];
         url.searchParams.append(k, typeof v === 'object' ? JSON.stringify(v) : v);
       }
-      var ctrl = new AbortController();
-      var tid = setTimeout(function() { ctrl.abort(); }, 30000);
+      return url;
+    }
+
+    function callGasJsonp(url) {
+      return new Promise(function(resolve, reject) {
+        var cbName = '_gasCb_' + Math.random().toString(36).slice(2);
+        var timeout = setTimeout(function() { cleanup(); reject(new Error('通信タイムアウト')); }, 30000);
+        function cleanup() {
+          clearTimeout(timeout);
+          delete window[cbName];
+          var el = document.getElementById(cbName);
+          if (el) el.parentNode.removeChild(el);
+        }
+        window[cbName] = function(data) { cleanup(); resolve(data); };
+        url.searchParams.set('callback', cbName);
+        var s = document.createElement('script');
+        s.id = cbName;
+        s.src = url.toString();
+        s.onerror = function() { cleanup(); reject(new Error('通信エラー')); };
+        document.head.appendChild(s);
+      });
+    }
+
+    async function callGas(action, params) {
+      if (!isGasUrlValid()) {
+        console.error('GASのURLが設定されていません。');
+        throw new Error('GASのURLが設定されていません。');
+      }
+      var url = buildGasUrl(action, params);
       try {
+        var ctrl = new AbortController();
+        var tid = setTimeout(function() { ctrl.abort(); }, 15000);
         var res = await fetch(url.toString(), { method: 'GET', mode: 'cors', credentials: 'omit', signal: ctrl.signal });
         clearTimeout(tid);
         if (!res.ok) throw new Error('HTTP ' + res.status);
@@ -210,7 +235,7 @@
       } catch (e) {
         clearTimeout(tid);
         if (e.name === 'AbortError') throw new Error('通信タイムアウト');
-        throw new Error('通信エラー');
+        return callGasJsonp(buildGasUrl(action, params));
       }
     }
 
