@@ -241,14 +241,31 @@ function recordTimestamp(payload) {
   const dateStr = Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd');
 
   // 打刻記録シート: タイムスタンプ, スタッフID, 氏名, 出勤時刻, 退勤時刻, 休憩時間
-  tsSheet.appendRow([
-    now,
-    payload.uuid || '',
-    payload.name || '',
-    startTime,
-    endTime,
-    breakMinutes
-  ]);
+  var rowBefore = tsSheet.getLastRow();
+  try {
+    tsSheet.appendRow([
+      now,
+      payload.uuid || '',
+      payload.name || '',
+      startTime,
+      endTime,
+      breakMinutes
+    ]);
+  } catch (appendErr) {
+    return {
+      ok: false,
+      message: 'シートへの書き込みに失敗しました: ' + appendErr.message,
+      recorded: false
+    };
+  }
+  var rowAfter = tsSheet.getLastRow();
+  if (rowAfter !== rowBefore + 1) {
+    return {
+      ok: false,
+      message: '打刻記録シートに行が追加されていません（権限・シート名・共有設定を確認してください）',
+      recorded: false
+    };
+  }
 
   // スタッフ別シート: 氏名は "姓 名" → シート名は姓（先頭の単語）
   const namePart = (payload.name || '').trim().split(/\s+/)[0] || '';
@@ -274,6 +291,7 @@ function recordTimestamp(payload) {
     ok: true,
     message: '出勤記録を保存しました',
     recorded: true,
+    row: rowAfter,
     timestamp: Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss'),
     startTime: startTime,
     endTime: endTime,

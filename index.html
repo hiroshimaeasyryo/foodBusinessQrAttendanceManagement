@@ -281,15 +281,19 @@
         throw new Error('GASのURLが設定されていません。');
       }
       var url = buildGasUrl(action, params);
+      var tid = null;
       try {
         var ctrl = new AbortController();
-        var tid = setTimeout(function() { ctrl.abort(); }, 15000);
+        tid = setTimeout(function() { ctrl.abort(); }, 15000);
         var res = await fetch(url.toString(), { method: 'GET', mode: 'cors', credentials: 'omit', signal: ctrl.signal });
-        clearTimeout(tid);
+        if (tid) clearTimeout(tid);
+        tid = null;
         if (!res.ok) throw new Error('HTTP ' + res.status);
-        return await res.json();
+        var data = await res.json();
+        if (data == null || typeof data !== 'object') throw new Error('不正な応答です');
+        return data;
       } catch (e) {
-        clearTimeout(tid);
+        if (tid) clearTimeout(tid);
         if (e.name === 'AbortError') throw new Error('通信タイムアウト');
         return callGasJsonp(buildGasUrl(action, params));
       }
@@ -386,8 +390,11 @@
     var scanRevealTimer = null;
     function goToScanSection() {
       secScan.classList.remove('disabled-section');
-      scanStatus.textContent = 'QRコードを読み取ってください';
+      scanStatus.textContent = 'カメラを起動しています…';
       secScan.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      setTimeout(function() {
+        if (selectedStaff && !scanning) startCamera();
+      }, 400);
     }
     function selectStaff(staff, btnEl) {
       if (scanRevealTimer) { clearTimeout(scanRevealTimer); scanRevealTimer = null; }
@@ -444,10 +451,17 @@
           video.srcObject = stream;
           video.play();
           scanning = true;
+          scanStatus.textContent = 'QRコードを読み取ってください';
           scanLine.classList.add('active');
           requestAnimationFrame(tick);
         })
-        .catch(function(err) { scanStatus.textContent = 'カメラエラー: ' + err.name; });
+        .catch(function(err) {
+          if (err.name === 'NotAllowedError' || err.name === 'SecurityError') {
+            scanStatus.innerHTML = 'カメラが許可されていません。<strong>この枠をタップ</strong>して許可してください。';
+          } else {
+            scanStatus.textContent = 'カメラエラー: ' + (err.message || err.name);
+          }
+        });
     }
 
     function stopCamera() {
@@ -521,12 +535,14 @@
       };
       try {
         var res = await callGas('recordTimestamp', { payload: payload });
-        if (res.ok) {
-          showToast(res.message, 'success');
+        var mustRecord = payload.property !== '業務委託';
+        var recordedOk = res && res.ok && (!mustRecord || res.recorded === true);
+        if (recordedOk) {
+          showToast(res.message || '完了', 'success');
           scanStatus.textContent = '完了';
           setTimeout(resetApp, 3000);
         } else {
-          showToast(res.message || '失敗', 'error');
+          showToast((res && res.message) || '保存に失敗しました（スプレッドシートを確認してください）', 'error');
           setTimeout(function() { scanning = true; startCamera(); }, 2000);
         }
       } catch (err) {

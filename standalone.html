@@ -224,7 +224,7 @@
       var q = urlParams.get('gasUrl');
       if (q && q.trim()) return q.trim();
       if (typeof window.__GAS_URL__ === 'string' && window.__GAS_URL__.trim()) return window.__GAS_URL__.trim();
-      return 'https://script.google.com/macros/s/AKfycby9uHvocHSTO7TfwllfdcvF6kkItIBciC6MnJJh_TJDb6hfiG7FLAeMGEV2DhNhI1Hw/exec';
+      return 'https://script.google.com/a/macros/workaslife-inc.com/s/AKfycbyIosLWmJfkKyyw6SxxHRv8DxYNlqkXw8sqZZAfBmb7yJwsBr-374ueJ_f5yNh7Ud4/exec';
     })();
 
     function isGasUrlValid() {
@@ -273,15 +273,19 @@
       }
       document.getElementById('configError').classList.remove('show');
       const url = buildGasUrl(action, params);
+      let tid = null;
       try {
         const ctrl = new AbortController();
-        const tid = setTimeout(() => ctrl.abort(), 15000);
+        tid = setTimeout(function() { ctrl.abort(); }, 15000);
         const res = await fetch(url.toString(), { method: 'GET', mode: 'cors', credentials: 'omit', signal: ctrl.signal });
-        clearTimeout(tid);
+        if (tid) clearTimeout(tid);
+        tid = null;
         if (!res.ok) throw new Error('HTTP ' + res.status);
-        return await res.json();
+        const data = await res.json();
+        if (data == null || typeof data !== 'object') throw new Error('不正な応答です');
+        return data;
       } catch (e) {
-        clearTimeout(tid);
+        if (tid) clearTimeout(tid);
         if (e.name === 'AbortError') throw new Error('通信タイムアウト');
         return callGasJsonp(buildGasUrl(action, params));
       }
@@ -377,8 +381,12 @@
     let scanRevealTimer = null;
     function goToScanSection() {
       secScan.classList.remove('disabled-section');
-      scanStatus.textContent = 'QRコードを読み取ってください';
+      scanStatus.textContent = 'カメラを起動しています…';
       secScan.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // セクション表示後すぐカメラ起動（ユーザー操作の直後なら許可されやすい）
+      setTimeout(function() {
+        if (selectedStaff && !scanning) startCamera();
+      }, 400);
     }
     function selectStaff(staff, btnEl) {
       if (scanRevealTimer) { clearTimeout(scanRevealTimer); scanRevealTimer = null; }
@@ -471,12 +479,13 @@
           video.srcObject = stream;
           video.play();
           scanning = true;
+          scanStatus.textContent = 'QRコードを読み取ってください';
           scanLine.classList.add('active');
           requestAnimationFrame(tick);
         })
         .catch(err => {
           if (err.name === 'NotAllowedError' || err.name === 'SecurityError' || (err.message && err.message.indexOf('Permissions policy') !== -1)) {
-            scanStatus.innerHTML = 'カメラが許可されていません。GASのプレビューではなく、<strong>デプロイしたウェブアプリのURLを新しいタブで直接開いて</strong>ください。';
+            scanStatus.innerHTML = 'カメラが許可されていません。<strong>この枠をタップ</strong>して許可するか、HTTPSのURLで開いてください。';
           } else {
             scanStatus.textContent = 'カメラエラー: ' + (err.message || err.name);
           }
@@ -521,13 +530,16 @@
 
       try {
         const res = await callGas('recordTimestamp', { payload: payload });
-        if (res.ok) {
-          showToast(res.message, 'success');
+        // 業務委託は recorded: false だが ok（記録なしメッセージ）
+        var mustRecord = payload.property !== '業務委託';
+        var recordedOk = res && res.ok && (!mustRecord || res.recorded === true);
+        if (recordedOk) {
+          showToast(res.message || '完了', 'success');
           scanStatus.textContent = '完了';
           setTimeout(resetApp, 3000);
         } else {
-          showToast(res.message || '失敗', 'error');
-          setTimeout(() => { scanning = true; startCamera(); }, 2000);
+          showToast((res && res.message) || '保存に失敗しました（スプレッドシートを確認してください）', 'error');
+          setTimeout(function() { scanning = true; startCamera(); }, 2000);
         }
       } catch (err) {
         showToast('エラー: ' + err.message, 'error');
@@ -535,7 +547,7 @@
       }
     }
 
-    secScan.addEventListener('click', () => { if (!scanning && selectedStaff) startCamera(); });
+    secScan.addEventListener('click', function() { if (!scanning && selectedStaff) startCamera(); });
 
     function showToast(msg, type) {
       const t = document.getElementById('toast');
