@@ -133,6 +133,14 @@
     .hero-sub { font-size: 0.8rem; color: var(--text-sub); margin: 0; }
     .config-error { background: #FEF2F2; border: 1px solid #FECACA; color: var(--error); padding: 12px 16px; border-radius: var(--radius); font-size: 0.9rem; margin-bottom: 16px; text-align: center; display: none; }
     .config-error.show { display: block; }
+    /* モバイル用デバッグ（?debug=1 で表示）。Console なしで GAS 応答を確認 */
+    #debugPanel { display: none; position: fixed; bottom: 0; left: 0; right: 0; max-height: 35vh; overflow: auto;
+      background: #111827; color: #A7F3D0; font-family: ui-monospace, monospace; font-size: 11px; padding: 10px 12px;
+      z-index: 999; border-top: 2px solid var(--primary); }
+    #debugPanel.show { display: block; }
+    #debugPanel .debug-line { margin: 4px 0; word-break: break-all; white-space: pre-wrap; }
+    #debugPanel .debug-title { color: #93C5FD; font-weight: 700; margin-bottom: 8px; }
+    #debugClear { margin-top: 8px; padding: 6px 12px; border-radius: 8px; border: none; background: var(--primary); color: #fff; font-weight: 600; }
   </style>
 </head>
 
@@ -144,6 +152,11 @@
       <span class="hero-sub">誕生日4桁 → スタッフ選択 → QRスキャン</span>
     </header>
     <div id="configError" class="config-error">GASのURLが設定されていません。README の「GitHub Pages」の項を参照し、standalone.html の GAS_URL を書き換えるか、?gasUrl=... で開くか、config.js を用意してください。</div>
+    <div id="debugPanel" aria-live="polite">
+      <div class="debug-title">DEBUG（?debug=1）— GAS 応答・エラーをここに出します</div>
+      <div id="debugLog"></div>
+      <button type="button" id="debugClear">ログをクリア</button>
+    </div>
 
     <!-- STEP 1: 誕生日4桁 → 候補表示 -->
     <section class="card active" id="sec-birth">
@@ -219,12 +232,30 @@
   <script>
     var urlParams = new URLSearchParams(window.location.search);
     var placeId = urlParams.get('place') || '';
+    var DEBUG_ON = urlParams.get('debug') === '1' || urlParams.get('debug') === 'true';
+
+    function debugLog(msg) {
+      if (!DEBUG_ON) return;
+      var panel = document.getElementById('debugPanel');
+      var log = document.getElementById('debugLog');
+      if (!panel || !log) return;
+      panel.classList.add('show');
+      var line = document.createElement('div');
+      line.className = 'debug-line';
+      line.textContent = '[' + new Date().toISOString().slice(11, 19) + '] ' + (typeof msg === 'string' ? msg : JSON.stringify(msg));
+      log.insertBefore(line, log.firstChild);
+    }
+    if (DEBUG_ON) {
+      document.getElementById('debugClear').onclick = function() {
+        document.getElementById('debugLog').innerHTML = '';
+      };
+    }
 
     var GAS_URL = (function() {
       var q = urlParams.get('gasUrl');
       if (q && q.trim()) return q.trim();
       if (typeof window.__GAS_URL__ === 'string' && window.__GAS_URL__.trim()) return window.__GAS_URL__.trim();
-      return 'https://script.google.com/a/macros/workaslife-inc.com/s/AKfycbyIosLWmJfkKyyw6SxxHRv8DxYNlqkXw8sqZZAfBmb7yJwsBr-374ueJ_f5yNh7Ud4/exec';
+      return 'https://script.google.com/macros/s/AKfycbzmImbDu1zJ-l6FjXj7PwpFzB6e7MGlfUqD-Vz7Hk3fa9BebkCG6FLE3W5rCYJ0GU4s/exec';
     })();
 
     function isGasUrlValid() {
@@ -256,12 +287,20 @@
           const el = document.getElementById(cbName);
           if (el) el.parentNode.removeChild(el);
         }
-        window[cbName] = (data) => { cleanup(); resolve(data); };
+        window[cbName] = function(data) {
+          try { debugLog('JSONP callback: ' + JSON.stringify(data)); } catch (e) {}
+          cleanup();
+          resolve(data);
+        };
         url.searchParams.set('callback', cbName);
         const s = document.createElement('script');
         s.id = cbName;
         s.src = url.toString();
-        s.onerror = () => { cleanup(); reject(new Error('通信エラー')); };
+        s.onerror = function() {
+          debugLog('JSONP script onerror（GAS が JS を返せていない可能性・SyntaxError 時など）');
+          cleanup();
+          reject(new Error('通信エラー'));
+        };
         document.head.appendChild(s);
       });
     }
@@ -286,6 +325,7 @@
         return data;
       } catch (e) {
         if (tid) clearTimeout(tid);
+        debugLog('callGas fetch失敗→JSONPへ: ' + (e && e.message ? e.message : e));
         if (e.name === 'AbortError') throw new Error('通信タイムアウト');
         return callGasJsonp(buildGasUrl(action, params));
       }
@@ -529,7 +569,9 @@
       };
 
       try {
+        debugLog('recordTimestamp payload: ' + JSON.stringify(payload));
         const res = await callGas('recordTimestamp', { payload: payload });
+        debugLog('recordTimestamp res: ' + JSON.stringify(res));
         // 業務委託は recorded: false だが ok（記録なしメッセージ）
         var mustRecord = payload.property !== '業務委託';
         var recordedOk = res && res.ok && (!mustRecord || res.recorded === true);
@@ -542,8 +584,9 @@
           setTimeout(function() { scanning = true; startCamera(); }, 2000);
         }
       } catch (err) {
+        debugLog('handleQr catch: ' + (err && err.message ? err.message : err));
         showToast('エラー: ' + err.message, 'error');
-        setTimeout(() => { scanning = true; startCamera(); }, 2000);
+        setTimeout(function() { scanning = true; startCamera(); }, 2000);
       }
     }
 

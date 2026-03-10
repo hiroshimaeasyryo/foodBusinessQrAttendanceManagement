@@ -218,7 +218,8 @@
   <script>
     window.__LOGO_URL__ = "<?= typeof logoUrl !== 'undefined' && logoUrl ? logoUrl : '' ?>";
     window.__GAS_URL__ = "<?= typeof gasUrl !== 'undefined' ? gasUrl : '' ?>";
-    if (typeof window.__GAS_URL__ === 'string' && window.__GAS_URL__.indexOf('<?=') !== -1) {
+    // テンプレ未適用のとき GAS_URL に scriptlet 断片が残るため \u003C\u003F= で検出する
+    if (typeof window.__GAS_URL__ === 'string' && window.__GAS_URL__.indexOf('\u003C\u003F=') !== -1) {
       var q = new URLSearchParams(window.location.search);
       var fallback = (typeof window.__GAS_URL_FALLBACK__ !== 'undefined' ? window.__GAS_URL_FALLBACK__ : '');
       if (!fallback && window.location.hostname === 'hiroshimaeasyryo.github.io') {
@@ -227,7 +228,7 @@
       window.__GAS_URL__ = (q.get('gasUrl') || '').trim() || fallback;
       window.__LOGO_URL__ = 'logo.png';
     }
-    if (window.__LOGO_URL__ && window.__LOGO_URL__.indexOf('<?=') === -1) {
+    if (window.__LOGO_URL__ && window.__LOGO_URL__.indexOf('\u003C\u003F=') === -1) {
       document.addEventListener('DOMContentLoaded', function() {
         var f = document.getElementById('favicon'); if (f) f.href = window.__LOGO_URL__;
         var l = document.getElementById('hero-logo'); if (l) l.src = window.__LOGO_URL__;

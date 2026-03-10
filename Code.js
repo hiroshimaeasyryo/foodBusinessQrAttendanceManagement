@@ -29,10 +29,12 @@ function doGet(e) {
         case 'verifyStaff':
           result = verifyStaff(e.parameter.uuid, e.parameter.birthdate);
           break;
-        case 'recordTimestamp':
+        case 'recordTimestamp': {
+          // case 内で const/let を使う場合は必ず {} でブロック（未ブロックだと SyntaxError になる）
           const payload = JSON.parse(e.parameter.payload);
           result = recordTimestamp(payload);
           break;
+        }
         case 'clearStaffCache':
           result = clearStaffCache();
           break;
