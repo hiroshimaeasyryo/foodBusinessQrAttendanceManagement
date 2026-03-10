@@ -5,6 +5,7 @@
 const SPREADSHEET_ID = '1BzM547ikvZIjXLEQBktuRxeU0UaiPH7Td1m80tBoSGE';
 const STAFF_SHEET_NAME = 'スタッフDB';
 const TIMESTAMP_SHEET_NAME = '打刻記録';
+const BACKEND_VERSION = '2026-03-10_break-hours';
 
 function getSpreadsheet() {
   return SpreadsheetApp.openById(SPREADSHEET_ID);
@@ -295,10 +296,12 @@ function recordTimestamp(payload) {
     ok: true,
     message: '出勤記録を保存しました',
     recorded: true,
+    backendVersion: BACKEND_VERSION,
     row: rowAfter,
     timestamp: Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss'),
     startTime: startTime,
     endTime: endTime,
-    breakMinutes: breakMinutes
+    breakMinutes: breakMinutes,
+    recordedBreakHours: breakHours
   };
 }

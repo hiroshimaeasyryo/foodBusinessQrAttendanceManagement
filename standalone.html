@@ -257,6 +257,7 @@
       if (typeof window.__GAS_URL__ === 'string' && window.__GAS_URL__.trim()) return window.__GAS_URL__.trim();
       return 'https://script.google.com/macros/s/AKfycbzmImbDu1zJ-l6FjXj7PwpFzB6e7MGlfUqD-Vz7Hk3fa9BebkCG6FLE3W5rCYJ0GU4s/exec';
     })();
+    debugLog('GAS_URL: ' + GAS_URL);
 
     function isGasUrlValid() {
       if (!GAS_URL || typeof GAS_URL !== 'string') return false;

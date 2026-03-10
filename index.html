@@ -238,6 +238,7 @@
     var GAS_URL = window.__GAS_URL__ || "YOUR_GAS_WEB_APP_URL";
     var urlParams = new URLSearchParams(window.location.search);
     var placeId = urlParams.get('place') || '';
+    if (typeof console !== 'undefined' && console.log) console.log('[AccessControlFoodBusiness] GAS_URL:', GAS_URL);
 
     function isGasUrlValid() {
       if (!GAS_URL || typeof GAS_URL !== 'string') return false;
