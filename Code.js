@@ -40,16 +40,19 @@ function getSpreadsheet() {
 }
 
 /**
- * シートの1行目（ヘッダー）を読み、カラム名の並びと名前→列インデックス(0始まり)を返す。
+ * シートの指定行（1始まり）をヘッダーとして読み、カラム名の並びと名前→列インデックス(0始まり)を返す。
  * 列の移動・挿入に耐えるため、書き込み時はこの並びで行データを組み立てる。
+ * @param {GoogleAppsScript.Spreadsheet.Sheet} sheet
+ * @param {number} [headerRowOneBased] ヘッダー行（1始まり）。省略時は 1。
  * @returns {{ headerNames: string[], nameToIndex: Object<string, number> }}
  */
-function getSheetHeaderOrder(sheet) {
+function getSheetHeaderOrder(sheet, headerRowOneBased) {
+  var row = headerRowOneBased == null ? 1 : Math.max(1, headerRowOneBased);
   const lastCol = sheet.getLastColumn();
   if (lastCol === 0) {
     return { headerNames: [], nameToIndex: {} };
   }
-  const headerRow = sheet.getRange(1, 1, 1, lastCol).getValues()[0];
+  const headerRow = sheet.getRange(row, 1, row, lastCol).getValues()[0];
   const headerNames = headerRow.map(function (cell) { return String(cell || '').trim(); });
   const nameToIndex = {};
   headerNames.forEach(function (name, idx) {
@@ -106,15 +109,26 @@ function ensureTransferSheet() {
  */
 function getTransferSheetExistingKeys(transferSheet) {
   const keys = new Set();
+  const map = getTransferSheetExistingRows(transferSheet);
+  Object.keys(map).forEach(function (k) { keys.add(k); });
+  return keys;
+}
+
+/**
+ * 転記用シートの既存行を行番号(2始まり)と行データで返す。更新反映で使用。
+ * @returns {Object<string, { rowIndex: number, rowData: Array }} キーは "日付\tスタッフID"
+ */
+function getTransferSheetExistingRows(transferSheet) {
+  const result = {};
   const lastRow = transferSheet.getLastRow();
-  if (lastRow < 2) return keys;
+  if (lastRow < 2) return result;
   const header = getSheetHeaderOrder(transferSheet);
   const dateIdx = header.nameToIndex['日付'];
   const uuidIdx = header.nameToIndex['スタッフID'];
-  if (dateIdx === undefined || uuidIdx === undefined) return keys;
+  if (dateIdx === undefined || uuidIdx === undefined) return result;
   const numCols = transferSheet.getLastColumn();
   const rows = transferSheet.getRange(2, 1, lastRow, numCols).getValues();
-  rows.forEach(function (row) {
+  rows.forEach(function (row, i) {
     const dateVal = row[dateIdx];
     const uuidVal = row[uuidIdx];
     let dateStr = '';
@@ -123,9 +137,12 @@ function getTransferSheetExistingKeys(transferSheet) {
     } else if (dateVal) {
       dateStr = String(dateVal).trim();
     }
-    if (dateStr && uuidVal) keys.add(dateStr + '\t' + String(uuidVal));
+    if (dateStr && uuidVal) {
+      const key = dateStr + '\t' + String(uuidVal);
+      result[key] = { rowIndex: i + 2, rowData: row };
+    }
   });
-  return keys;
+  return result;
 }
 
 /**
@@ -139,102 +156,131 @@ function dateToYearMonth(dateStr) {
 }
 
 /**
- * 日次転記バッチ: 打刻記録と各スタッフシートの「休み」を転記用シートに重複なく追記する。
- * @param {string} [targetDateStr] 対象日 (yyyy-MM-dd)。省略時は「昨日」。
- * @returns {{ ok: boolean, message: string, appended: number }}
+ * セル値（Date または "2026/03/08" / "2026年3月8日(日)" 等）を yyyy-MM-dd に正規化。dateSet 照合用。
  */
-function runDailyTransfer(targetDateStr) {
+function normalizeDateStr(dateVal, tz) {
+  if (!dateVal && dateVal !== 0) return '';
+  if (dateVal instanceof Date) {
+    return Utilities.formatDate(dateVal, tz, 'yyyy-MM-dd');
+  }
+  const s = String(dateVal).trim();
+  var m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
+  if (!m) m = s.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})/);
+  if (!m) m = s.match(/(\d{4})年(\d{1,2})月(\d{1,2})日/);
+  if (m) {
+    const y = m[1];
+    const mon = ('0' + m[2]).slice(-2);
+    const d = ('0' + m[3]).slice(-2);
+    return y + '-' + mon + '-' + d;
+  }
+  return s || '';
+}
+
+/**
+ * 転記用の「出勤開始」「出勤終了」用に時刻を "HH:mm" 文字列で返す。Date の場合は時刻のみ書式化。
+ */
+function formatTimeForTransfer(val, tz) {
+  if (val == null || val === '') return '';
+  if (val instanceof Date) {
+    return Utilities.formatDate(val, tz, 'HH:mm');
+  }
+  const s = String(val).trim();
+  if (/^\d{1,2}:\d{2}$/.test(s)) return s;
+  return s;
+}
+
+/**
+ * 開始日〜終了日（yyyy-MM-dd）の日付文字列配列を返す（両端含む）。
+ */
+function getDateRangeInclusive(startDateStr, endDateStr) {
   const tz = Session.getScriptTimeZone();
-  if (!targetDateStr) {
-    const yesterday = new Date();
-    yesterday.setDate(yesterday.getDate() - 1);
-    targetDateStr = Utilities.formatDate(yesterday, tz, 'yyyy-MM-dd');
+  const start = new Date(startDateStr + 'T00:00:00');
+  const end = new Date(endDateStr + 'T00:00:00');
+  if (start.getTime() > end.getTime()) return [];
+  const list = [];
+  const d = new Date(start);
+  while (d.getTime() <= end.getTime()) {
+    list.push(Utilities.formatDate(d, tz, 'yyyy-MM-dd'));
+    d.setDate(d.getDate() + 1);
   }
+  return list;
+}
 
-  const ss = getSpreadsheet();
+/**
+ * 日付範囲内の「正規1行」を 打刻記録 と 各スタッフシート から構築する。
+ * キーは "日付\tスタッフID"。出勤があれば出勤、なければ休みがあれば休み。
+ * @returns {Object<string, { yearMonth, uuid, name, date, kubun, start, end, breakHours, workHours, biko }>}
+ */
+function buildCanonicalRowsForDateRange(ss, startDateStr, endDateStr, staffList, familyNameToStaff, tz) {
+  const dateSet = {};
+  getDateRangeInclusive(startDateStr, endDateStr).forEach(function (d) { dateSet[d] = true; });
+
+  const canonical = {};
   const tsSheet = ss.getSheetByName(TIMESTAMP_SHEET_NAME);
-  if (!tsSheet) {
-    return { ok: false, message: '打刻記録 シートが見つかりません', appended: 0 };
-  }
-
-  const transferSheet = ensureTransferSheet();
-  const existingKeys = getTransferSheetExistingKeys(transferSheet);
-  const header = getSheetHeaderOrder(transferSheet);
-  const staffList = getStaffList();
-  const familyNameToStaff = {};
-  staffList.forEach(function (s) {
-    const family = (s.name || '').trim().split(/\s+/)[0] || '';
-    if (family && !familyNameToStaff[family]) familyNameToStaff[family] = s;
-  });
-
-  const toAppend = [];
-  const tsHeader = getSheetHeaderOrder(tsSheet);
-  const tsDateIdx = tsHeader.nameToIndex['日付'];
-  const tsUuidIdx = tsHeader.nameToIndex['スタッフID'];
-  const tsNameIdx = tsHeader.nameToIndex['氏名'];
-  const tsStartIdx = tsHeader.nameToIndex['出勤時刻'];
-  const tsEndIdx = tsHeader.nameToIndex['退勤時刻'];
-  const tsBreakIdx = tsHeader.nameToIndex['休憩時間(時間)'];
-
-  if (tsSheet.getLastRow() >= 2 && tsDateIdx !== undefined && tsUuidIdx !== undefined) {
-    const tsRows = tsSheet.getRange(2, 1, tsSheet.getLastRow(), tsSheet.getLastColumn()).getValues();
-    tsRows.forEach(function (row) {
-      let dateStr = '';
-      const dateVal = row[tsDateIdx];
-      if (dateVal instanceof Date) {
-        dateStr = Utilities.formatDate(dateVal, tz, 'yyyy-MM-dd');
-      } else if (dateVal) {
-        dateStr = String(dateVal).trim();
-      }
-      if (dateStr !== targetDateStr) return;
-      const key = dateStr + '\t' + String(row[tsUuidIdx] || '');
-      if (existingKeys.has(key)) return;
-      existingKeys.add(key);
-      const start = row[tsStartIdx] != null ? String(row[tsStartIdx]) : '';
-      const end = row[tsEndIdx] != null ? String(row[tsEndIdx]) : '';
-      const breakH = row[tsBreakIdx] != null ? Number(row[tsBreakIdx]) : 0;
-      toAppend.push({
-        yearMonth: dateToYearMonth(dateStr),
-        uuid: row[tsUuidIdx],
-        name: row[tsNameIdx] != null ? String(row[tsNameIdx]) : '',
-        date: dateStr,
-        kubun: '出勤',
-        start: start,
-        end: end,
-        breakHours: breakH,
-        workHours: calcWorkHours(start, end, breakH),
-        biko: ''
+  if (tsSheet && tsSheet.getLastRow() >= 2) {
+    const tsHeader = getSheetHeaderOrder(tsSheet);
+    const tsDateIdx = tsHeader.nameToIndex['日付'];
+    const tsUuidIdx = tsHeader.nameToIndex['スタッフID'];
+    const tsNameIdx = tsHeader.nameToIndex['氏名'];
+    const tsStartIdx = tsHeader.nameToIndex['出勤時刻'];
+    const tsEndIdx = tsHeader.nameToIndex['退勤時刻'];
+    const tsBreakIdx = tsHeader.nameToIndex['休憩時間(時間)'];
+    if (tsDateIdx !== undefined && tsUuidIdx !== undefined) {
+      const tsRows = tsSheet.getRange(2, 1, tsSheet.getLastRow(), tsSheet.getLastColumn()).getValues();
+      tsRows.forEach(function (row) {
+        const dateStr = normalizeDateStr(row[tsDateIdx], tz);
+        if (!dateStr || !dateSet[dateStr]) return;
+        const key = dateStr + '\t' + String(row[tsUuidIdx] || '');
+        const start = formatTimeForTransfer(row[tsStartIdx], tz);
+        const end = formatTimeForTransfer(row[tsEndIdx], tz);
+        const breakH = row[tsBreakIdx] != null ? Number(row[tsBreakIdx]) : 0;
+        canonical[key] = {
+          yearMonth: dateToYearMonth(dateStr),
+          uuid: row[tsUuidIdx],
+          name: row[tsNameIdx] != null ? String(row[tsNameIdx]) : '',
+          date: dateStr,
+          kubun: '出勤',
+          start: start,
+          end: end,
+          breakHours: breakH,
+          workHours: calcWorkHours(start, end, breakH),
+          biko: ''
+        };
       });
-    });
+    }
   }
 
+  // スタッフ別シート: 1-2行目がヘッダー、3行目以降がデータ（recordTimestamp と同様）。2行目に「日付」「休み」がなければ1行目をヘッダーとする。
   const sheetNames = [STAFF_SHEET_NAME, TIMESTAMP_SHEET_NAME, TRANSFER_SHEET_NAME];
   ss.getSheets().forEach(function (s) {
     const name = s.getName();
     if (sheetNames.indexOf(name) >= 0) return;
     const staff = familyNameToStaff[name];
     if (!staff) return;
-    const shHeader = getSheetHeaderOrder(s);
-    const dateIdx = shHeader.nameToIndex['日付'];
-    const yasumiIdx = shHeader.nameToIndex['休み'];
+    var shHeader = getSheetHeaderOrder(s, 2);
+    var dateIdx = shHeader.nameToIndex['日付'];
+    var yasumiIdx = shHeader.nameToIndex['休み'];
+    var dataFirstRow = 3;
+    if (dateIdx === undefined || yasumiIdx === undefined) {
+      shHeader = getSheetHeaderOrder(s, 1);
+      dateIdx = shHeader.nameToIndex['日付'];
+      yasumiIdx = shHeader.nameToIndex['休み'];
+      dataFirstRow = 2;
+    }
     if (dateIdx === undefined || yasumiIdx === undefined) return;
-    if (s.getLastRow() < 2) return;
-    const rows = s.getRange(2, 1, s.getLastRow(), s.getLastColumn()).getValues();
+    const lastRow = s.getLastRow();
+    if (lastRow < dataFirstRow) return;
+    const bikoIdx = shHeader.nameToIndex['備考'];
+    const rows = s.getRange(dataFirstRow, 1, lastRow, s.getLastColumn()).getValues();
     rows.forEach(function (row) {
-      let dateStr = '';
-      const dateVal = row[dateIdx];
-      if (dateVal instanceof Date) {
-        dateStr = Utilities.formatDate(dateVal, tz, 'yyyy-MM-dd');
-      } else if (dateVal) {
-        dateStr = String(dateVal).trim();
-      }
-      if (dateStr !== targetDateStr) return;
+      const dateStr = normalizeDateStr(row[dateIdx], tz);
+      if (!dateStr || !dateSet[dateStr]) return;
       const yasumi = row[yasumiIdx];
       if (yasumi === undefined || yasumi === null || String(yasumi).trim() === '') return;
       const key = dateStr + '\t' + staff.uuid;
-      if (existingKeys.has(key)) return;
-      existingKeys.add(key);
-      toAppend.push({
+      if (canonical[key]) return; // 出勤優先
+      const biko = (bikoIdx !== undefined && row[bikoIdx] != null) ? String(row[bikoIdx]).trim() : '';
+      canonical[key] = {
         yearMonth: dateToYearMonth(dateStr),
         uuid: staff.uuid,
         name: staff.name,
@@ -244,34 +290,151 @@ function runDailyTransfer(targetDateStr) {
         end: '',
         breakHours: '',
         workHours: '',
-        biko: ''
-      });
+        biko: biko
+      };
     });
   });
 
-  if (toAppend.length === 0) {
-    return { ok: true, message: '転記対象なし（既に転記済みまたは該当データなし）', appended: 0 };
+  return canonical;
+}
+
+/** 正規行オブジェクトを転記用ヘッダー順の配列に変換する */
+function canonicalRowToValues(r, headerNames) {
+  const map = {
+    '年月': r.yearMonth,
+    'スタッフID': r.uuid,
+    '氏名': r.name,
+    '日付': r.date,
+    '区分': r.kubun,
+    '出勤開始': r.start,
+    '出勤終了': r.end,
+    '休憩時間(時間)': r.breakHours,
+    '勤務時間(時間)': r.workHours,
+    '備考': r.biko
+  };
+  return headerNames.map(function (colName) {
+    const v = map[colName];
+    return v !== undefined && v !== null ? v : '';
+  });
+}
+
+/** 転記用の既存1行と正規1行が「同じ内容」か比較する（日付は文字列に正規化） */
+function transferRowEquals(existingRow, canonicalValues, header) {
+  if (existingRow.length !== canonicalValues.length) return false;
+  const dateIdx = header.nameToIndex['日付'];
+  for (var i = 0; i < existingRow.length; i++) {
+    var ex = existingRow[i];
+    var canon = canonicalValues[i];
+    if (dateIdx === i && ex instanceof Date) {
+      ex = Utilities.formatDate(ex, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+    }
+    if (typeof ex === 'number' && typeof canon === 'number') {
+      if (Math.abs(ex - canon) > 1e-6) return false;
+    } else if (String(ex).trim() !== String(canon).trim()) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * 日次転記バッチ: 打刻記録と各スタッフシートの「休み」を転記用シートに重複なく追記し、
+ * 過去範囲に指定がある場合は既存行の内容を正規データと照合して更新する。
+ * @param {string} [targetDateStr] 対象日 (yyyy-MM-dd)。省略時は「昨日」。
+ * @param {{ backwardDays?: number }} [options] backwardDays: 対象日の何日前までを「更新対象」にするか。0のときは追記のみ。例: 60 で過去60日分の変更を反映。
+ * @returns {{ ok: boolean, message: string, appended: number, updated: number }}
+ */
+function runDailyTransfer(targetDateStr, options) {
+  const tz = Session.getScriptTimeZone();
+  if (!targetDateStr) {
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    targetDateStr = Utilities.formatDate(yesterday, tz, 'yyyy-MM-dd');
+  }
+  options = options || {};
+  const backwardDays = Math.max(0, parseInt(options.backwardDays, 10) || 0);
+
+  const ss = getSpreadsheet();
+  const tsSheet = ss.getSheetByName(TIMESTAMP_SHEET_NAME);
+  if (!tsSheet) {
+    return { ok: false, message: '打刻記録 シートが見つかりません', appended: 0, updated: 0 };
   }
 
-  const rowValues = toAppend.map(function (r) {
-    return header.headerNames.map(function (colName) {
-      const map = {
-        '年月': r.yearMonth,
-        'スタッフID': r.uuid,
-        '氏名': r.name,
-        '日付': r.date,
-        '区分': r.kubun,
-        '出勤開始': r.start,
-        '出勤終了': r.end,
-        '休憩時間(時間)': r.breakHours,
-        '勤務時間(時間)': r.workHours,
-        '備考': r.biko
-      };
-      return map[colName] !== undefined ? map[colName] : '';
-    });
+  const transferSheet = ensureTransferSheet();
+  const header = getSheetHeaderOrder(transferSheet);
+  const staffList = getStaffList();
+  const familyNameToStaff = {};
+  staffList.forEach(function (s) {
+    const family = (s.name || '').trim().split(/\s+/)[0] || '';
+    if (family && !familyNameToStaff[family]) familyNameToStaff[family] = s;
   });
-  transferSheet.getRange(transferSheet.getLastRow() + 1, 1, transferSheet.getLastRow() + rowValues.length, header.headerNames.length).setValues(rowValues);
-  return { ok: true, message: '転記用シートに ' + toAppend.length + ' 件追記しました', appended: toAppend.length };
+
+  var startDateStr = targetDateStr;
+  if (backwardDays > 0) {
+    var startDate = new Date(targetDateStr + 'T00:00:00');
+    startDate.setDate(startDate.getDate() - backwardDays);
+    startDateStr = Utilities.formatDate(startDate, tz, 'yyyy-MM-dd');
+  }
+  const canonical = buildCanonicalRowsForDateRange(ss, startDateStr, targetDateStr, staffList, familyNameToStaff, tz);
+  const existingRows = getTransferSheetExistingRows(transferSheet);
+  var lastRowBeforeChanges = transferSheet.getLastRow();
+
+  var appended = 0;
+  var updated = 0;
+  const toAppend = [];
+  const toUpdate = [];
+
+  Object.keys(canonical).forEach(function (key) {
+    const r = canonical[key];
+    const canonicalValues = canonicalRowToValues(r, header.headerNames);
+    const existing = existingRows[key];
+    if (!existing) {
+      toAppend.push(canonicalValues);
+      appended++;
+    } else {
+      if (!transferRowEquals(existing.rowData, canonicalValues, header)) {
+        toUpdate.push({ rowIndex: existing.rowIndex, values: canonicalValues });
+        updated++;
+      }
+    }
+  });
+
+  if (toUpdate.length > 0) {
+    var numCols = header.headerNames.length;
+    toUpdate.forEach(function (item) {
+      // getRange(row, column, numRows, numColumns) で 1 行だけ指定（終了行指定だと numRows と解釈され範囲がずれる）
+      transferSheet.getRange(item.rowIndex, 1, 1, numCols).setValues([item.values]);
+    });
+  }
+  if (toAppend.length > 0) {
+    var numAppendRows = toAppend.length;
+    var appendStartRow = lastRowBeforeChanges + 1;
+    var numCols = header.headerNames.length;
+    for (var i = 0; i < toAppend.length; i++) {
+      if (toAppend[i].length !== numCols) {
+        throw new Error('転記用: 行' + (i + 1) + 'の列数がヘッダーと一致しません（データ=' + toAppend[i].length + ', ヘッダー=' + numCols + '）。転記用シート1行目の列数を確認してください。');
+      }
+    }
+    // getRange(row, column, numRows, numColumns) で行数・列数を明示（終了行計算のずれを防ぐ）
+    transferSheet.getRange(appendStartRow, 1, numAppendRows, numCols).setValues(toAppend);
+  }
+
+  var msg = '';
+  if (appended > 0) msg += '転記用に ' + appended + ' 件追記';
+  if (updated > 0) msg += (msg ? '。' : '') + '既存 ' + updated + ' 件を更新（過去の変更を反映）';
+  if (appended === 0 && updated === 0) msg = '転記対象なし（既に転記済みかつ変更なし）';
+  return { ok: true, message: msg, appended: appended, updated: updated };
+}
+
+/**
+ * 毎日定時実行用。トリガーにはこの関数を指定する。
+ * 昨日分を転記し、過去60日分の「休み」変更・行挿入などを転記用に反映する。
+ */
+function runDailyTransferScheduled() {
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const targetDateStr = Utilities.formatDate(yesterday, Session.getScriptTimeZone(), 'yyyy-MM-dd');
+  return runDailyTransfer(targetDateStr, { backwardDays: 60 });
 }
 
 /**
@@ -405,7 +568,7 @@ function getStaffList() {
   try {
     cache.put(cacheKey, JSON.stringify(result), 21600);
   } catch (e) {
-    console.error('Failed to put cache:', e);
+    // キャッシュ書き込み失敗時は無視（次回取得で再取得）
   }
 
   return result;
