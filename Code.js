@@ -7,6 +7,17 @@ const STAFF_SHEET_NAME = 'スタッフDB';
 const TIMESTAMP_SHEET_NAME = '打刻記録';
 const TRANSFER_SHEET_NAME = '転記用';
 
+/** 転記用シートを同期する先の別スプレッドシートID（オーナーでなくても編集権限があれば書き込み可能） */
+const EXTERNAL_TRANSFER_SPREADSHEET_ID = '1W2mWjdQGvPal8D06N1s1ompdicgc3mL5Cc6iRnhXiPs';
+/** 転記先スプレッドシート内の同期先シート名（既存の「勤怠明細」。逆流はしない） */
+const EXTERNAL_ATTENDANCE_SHEET_NAME = '勤怠明細';
+/** 勤怠明細シートへ書き込む際の「区分」値の変換（転記用の表記 → 勤怠明細用） */
+const KUBUN_MAP_TO_EXTERNAL = {
+  '年次有給休暇': '有給休暇',
+  '半休（午前休）': '午前休',
+  '半休（午後休）': '午後休'
+};
+
 /** 打刻記録シートの想定カラム名（生ログ。区分・勤務時間・備考は転記用で賄う） */
 const TIMESTAMP_SHEET_COLUMNS = [
   'タイムスタンプ',
@@ -620,13 +631,139 @@ function runDailyTransfer(targetDateStr, options) {
 
 /**
  * 毎日定時実行用。トリガーにはこの関数を指定する。
- * 昨日分を転記し、過去60日分の「休み」変更・行挿入などを転記用に反映する。
+ * 昨日分を転記し、過去60日分の「休み」変更・行挿入などを転記用に反映したうえで、
+ * 転記用シートの内容を外部スプレッドシートに同期する。
  */
 function runDailyTransferScheduled() {
   const yesterday = new Date();
   yesterday.setDate(yesterday.getDate() - 1);
   const targetDateStr = Utilities.formatDate(yesterday, Session.getScriptTimeZone(), 'yyyy-MM-dd');
-  return runDailyTransfer(targetDateStr, { backwardDays: 60 });
+  const transferResult = runDailyTransfer(targetDateStr, { backwardDays: 60 });
+  const syncResult = syncTransferSheetToExternalSpreadsheet();
+  return {
+    transfer: transferResult,
+    externalSync: syncResult,
+    message: (transferResult.message || '') + (syncResult.ok ? ' 外部同期: ' + syncResult.message : ' 外部同期失敗: ' + (syncResult.message || ''))
+  };
+}
+
+/**
+ * 区分の値を勤怠明細用に変換する。KUBUN_MAP_TO_EXTERNAL に定義されたものだけ変換し、それ以外はそのまま返す。
+ * @param {string} kubun 転記用の区分値
+ * @returns {string}
+ */
+function mapKubunForExternal(kubun) {
+  if (kubun == null || kubun === '') return kubun;
+  const s = String(kubun).trim();
+  return KUBUN_MAP_TO_EXTERNAL[s] !== undefined ? KUBUN_MAP_TO_EXTERNAL[s] : s;
+}
+
+/**
+ * 転記用シートの内容を別スプレッドシートの「勤怠明細」シートに同期する。
+ * 転記用を読み、区分を変換（年次有給休暇→有給休暇、半休（午前休）→午前休、半休（午後休）→午後休）したうえで、
+ * 既存の「勤怠明細」シートの同じ (日付, スタッフID) の行は上書き、存在しない行は最終行に追加する。
+ * 勤怠明細から転記用への逆流は行わない。
+ * @returns {{ ok: boolean, message: string, appended?: number, updated?: number }}
+ */
+function syncTransferSheetToExternalSpreadsheet() {
+  const ss = getSpreadsheet();
+  const transferSheet = ss.getSheetByName(TRANSFER_SHEET_NAME);
+  if (!transferSheet || transferSheet.getLastRow() === 0) {
+    return { ok: true, message: '転記用シートが存在しないか、データがありません', appended: 0, updated: 0 };
+  }
+
+  var destSs;
+  try {
+    destSs = SpreadsheetApp.openById(EXTERNAL_TRANSFER_SPREADSHEET_ID);
+  } catch (e) {
+    return { ok: false, message: '転記先スプレッドシートを開けません: ' + e.message, appended: 0, updated: 0 };
+  }
+
+  var destSheet = destSs.getSheetByName(EXTERNAL_ATTENDANCE_SHEET_NAME);
+  if (!destSheet) {
+    return { ok: false, message: '転記先に「' + EXTERNAL_ATTENDANCE_SHEET_NAME + '」シートがありません', appended: 0, updated: 0 };
+  }
+
+  const tz = Session.getScriptTimeZone();
+  const srcHeader = getSheetHeaderOrder(transferSheet);
+  const dateIdx = srcHeader.nameToIndex['日付'];
+  const uuidIdx = srcHeader.nameToIndex['スタッフID'];
+  const kubunIdx = srcHeader.nameToIndex['区分'];
+  if (dateIdx === undefined || uuidIdx === undefined) {
+    return { ok: false, message: '転記用シートに「日付」または「スタッフID」列がありません', appended: 0, updated: 0 };
+  }
+
+  const srcLastRow = transferSheet.getLastRow();
+  const srcNumCols = transferSheet.getLastColumn();
+  const srcValues = transferSheet.getRange(1, 1, srcLastRow, srcNumCols).getValues();
+  const srcHeaderRow = srcValues[0];
+  const srcDataRows = srcValues.slice(1);
+
+  // 区分を変換した行データを組み立てる
+  const mappedRows = srcDataRows.map(function (row) {
+    const r = row.slice();
+    if (kubunIdx !== undefined && r[kubunIdx] !== undefined) {
+      r[kubunIdx] = mapKubunForExternal(r[kubunIdx]);
+    }
+    return r;
+  });
+
+  // 勤怠明細の既存 (日付, スタッフID) → 行番号(1始まり)
+  const destLastRow = destSheet.getLastRow();
+  var existingKeyToRow = {};
+  if (destLastRow >= 2) {
+    const destHeader = getSheetHeaderOrder(destSheet);
+    const destDateIdx = destHeader.nameToIndex['日付'];
+    const destUuidIdx = destHeader.nameToIndex['スタッフID'];
+    if (destDateIdx !== undefined && destUuidIdx !== undefined) {
+      const destNumCols = destSheet.getLastColumn();
+      const destRows = destSheet.getRange(2, 1, destLastRow, destNumCols).getValues();
+      destRows.forEach(function (row, i) {
+        const dateStr = normalizeDateStr(row[destDateIdx], tz);
+        const uuidVal = row[destUuidIdx];
+        if (dateStr && uuidVal) {
+          existingKeyToRow[dateStr + '\t' + String(uuidVal)] = i + 2;
+        }
+      });
+    }
+  }
+
+  const numCols = srcHeaderRow.length;
+  var appended = 0;
+  var updated = 0;
+
+  if (destLastRow === 0) {
+    destSheet.getRange(1, 1, 1, numCols).setValues([srcHeaderRow]);
+    destSheet.getRange(1, 1, 1, numCols).setFontWeight('bold');
+  }
+
+  mappedRows.forEach(function (rowValues) {
+    const dateVal = rowValues[dateIdx];
+    const uuidVal = rowValues[uuidIdx];
+    let dateStr = '';
+    if (dateVal instanceof Date) {
+      dateStr = Utilities.formatDate(dateVal, tz, 'yyyy-MM-dd');
+    } else if (dateVal != null) {
+      dateStr = String(dateVal).trim();
+    }
+    if (!dateStr || uuidVal == null) return;
+    const key = dateStr + '\t' + String(uuidVal);
+    const destRowIndex = existingKeyToRow[key];
+    if (destRowIndex != null) {
+      destSheet.getRange(destRowIndex, 1, 1, numCols).setValues([rowValues]);
+      updated++;
+    } else {
+      const nextRow = destSheet.getLastRow() + 1;
+      destSheet.getRange(nextRow, 1, 1, numCols).setValues([rowValues]);
+      existingKeyToRow[key] = nextRow;
+      appended++;
+    }
+  });
+
+  var msg = '勤怠明細に 追加' + appended + ' 件';
+  if (updated > 0) msg += '、更新' + updated + ' 件';
+  msg += ' 同期しました';
+  return { ok: true, message: msg, appended: appended, updated: updated };
 }
 
 /**
