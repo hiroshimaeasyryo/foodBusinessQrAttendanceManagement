@@ -157,11 +157,16 @@ function dateToYearMonth(dateStr) {
 
 /**
  * セル値（Date または "2026/03/08" / "2026年3月8日(日)" 等）を yyyy-MM-dd に正規化。dateSet 照合用。
+ * 数値（スプレッドシートのシリアル日付）にも対応する。
  */
 function normalizeDateStr(dateVal, tz) {
   if (!dateVal && dateVal !== 0) return '';
   if (dateVal instanceof Date) {
     return Utilities.formatDate(dateVal, tz, 'yyyy-MM-dd');
+  }
+  if (typeof dateVal === 'number' && dateVal > 1000) {
+    var d = new Date((dateVal - 25569) * 86400 * 1000);
+    return Utilities.formatDate(d, tz, 'yyyy-MM-dd');
   }
   const s = String(dateVal).trim();
   var m = s.match(/^(\d{4})-(\d{1,2})-(\d{1,2})/);
@@ -177,16 +182,53 @@ function normalizeDateStr(dateVal, tz) {
 }
 
 /**
- * 転記用の「出勤開始」「出勤終了」用に時刻を "HH:mm" 文字列で返す。Date の場合は時刻のみ書式化。
+ * 時刻値（Date または "HH:mm"）を「24:00」「25:00」等の24時超え表記に変換する。
+ * 0:00 → 24:00、1:00 → 25:00、0:30 → 24:30 のように、午前0時〜11:59 を 24〜35 時で返す。
+ * 退勤時刻・出勤終了の記録・転記用。
  */
-function formatTimeForTransfer(val, tz) {
+function formatTimeTo24PlusNotation(val, tz) {
   if (val == null || val === '') return '';
+  var h = 0;
+  var m = 0;
   if (val instanceof Date) {
-    return Utilities.formatDate(val, tz, 'HH:mm');
+    h = val.getHours();
+    m = val.getMinutes();
+  } else {
+    const s = String(val).trim();
+    const match = s.match(/^(\d{1,2}):(\d{2})$/);
+    if (!match) return s;
+    h = parseInt(match[1], 10) || 0;
+    m = parseInt(match[2], 10) || 0;
   }
-  const s = String(val).trim();
-  if (/^\d{1,2}:\d{2}$/.test(s)) return s;
-  return s;
+  if (h >= 0 && h < 12) {
+    return (24 + h) + ':' + ('0' + m).slice(-2);
+  }
+  return ('0' + h).slice(-2) + ':' + ('0' + m).slice(-2);
+}
+
+/**
+ * 転記用の「出勤開始」「出勤終了」用に時刻を "HH:mm" 文字列で返す。Date の場合は時刻のみ書式化。
+ * options.isEndTime が true のときは、0時〜11:59 を 24:00〜35:59 の表記で返す（退勤・出勤終了用）。
+ */
+function formatTimeForTransfer(val, tz, options) {
+  if (val == null || val === '') return '';
+  var base = '';
+  if (val instanceof Date) {
+    base = Utilities.formatDate(val, tz, 'HH:mm');
+  } else {
+    const s = String(val).trim();
+    if (/^\d{1,2}:\d{2}$/.test(s)) base = s;
+    else return s;
+  }
+  if (options && options.isEndTime) {
+    const m = base.match(/^(\d{1,2}):(\d{2})$/);
+    if (m) {
+      const h = parseInt(m[1], 10) || 0;
+      const min = m[2];
+      if (h >= 0 && h < 12) return (24 + h) + ':' + min;
+    }
+  }
+  return base;
 }
 
 /**
@@ -232,7 +274,7 @@ function buildCanonicalRowsForDateRange(ss, startDateStr, endDateStr, staffList,
         if (!dateStr || !dateSet[dateStr]) return;
         const key = dateStr + '\t' + String(row[tsUuidIdx] || '');
         const start = formatTimeForTransfer(row[tsStartIdx], tz);
-        const end = formatTimeForTransfer(row[tsEndIdx], tz);
+        const end = formatTimeForTransfer(row[tsEndIdx], tz, { isEndTime: true });
         const breakH = row[tsBreakIdx] != null ? Number(row[tsBreakIdx]) : 0;
         canonical[key] = {
           yearMonth: dateToYearMonth(dateStr),
@@ -338,11 +380,151 @@ function transferRowEquals(existingRow, canonicalValues, header) {
 }
 
 /**
+ * ヘッダー情報から、候補名のいずれかで列インデックス(0始まり)を返す。
+ * @param {{ nameToIndex: Object<string, number>, headerNames?: string[] }} header getSheetHeaderOrder の戻り値
+ * @param {string[]} candidateNames 試すカラム名の並び（先勝）
+ * @returns {number|undefined}
+ */
+function resolveColumnIndex(header, candidateNames) {
+  for (var i = 0; i < candidateNames.length; i++) {
+    var idx = header.nameToIndex[candidateNames[i]];
+    if (idx !== undefined) return idx;
+  }
+  return undefined;
+}
+
+/**
+ * スタッフ別シート（{STAFF_FAMILY_NAME}）で手動修正した「始業」「終業」「休憩時間(時間)」を
+ * 打刻記録シートの対応行（同じ日付・スタッフID）に反映する。
+ * 転記用シートは打刻記録を参照するため、同期後に runDailyTransfer を実行すると転記用にも反映される。
+ * @param {{ staffFamilyName?: string, startDateStr?: string, endDateStr?: string }} [options]
+ *   - staffFamilyName: 指定した姓のシートのみ同期。省略時は全スタッフシート。
+ *   - startDateStr, endDateStr: 対象日付範囲 (yyyy-MM-dd)。省略時は全データ行を対象。
+ * @returns {{ ok: boolean, message: string, updated: number }}
+ */
+function syncStaffSheetToTimestamp(options) {
+  options = options || {};
+  const tz = Session.getScriptTimeZone();
+  const ss = getSpreadsheet();
+  const tsSheet = ss.getSheetByName(TIMESTAMP_SHEET_NAME);
+  if (!tsSheet || tsSheet.getLastRow() < 2) {
+    return { ok: true, message: '打刻記録にデータがありません', updated: 0 };
+  }
+
+  const staffList = getStaffList();
+  const familyNameToStaff = {};
+  staffList.forEach(function (s) {
+    const family = (s.name || '').trim().split(/\s+/)[0] || '';
+    if (family && !familyNameToStaff[family]) familyNameToStaff[family] = s;
+  });
+
+  const tsHeader = getSheetHeaderOrder(tsSheet);
+  const tsDateIdx = tsHeader.nameToIndex['日付'];
+  const tsUuidIdx = tsHeader.nameToIndex['スタッフID'];
+  const tsStartIdx = tsHeader.nameToIndex['出勤時刻'];
+  const tsEndIdx = tsHeader.nameToIndex['退勤時刻'];
+  const tsBreakIdx = tsHeader.nameToIndex['休憩時間(時間)'];
+  if (tsDateIdx === undefined || tsUuidIdx === undefined || tsStartIdx === undefined || tsEndIdx === undefined) {
+    return { ok: false, message: '打刻記録に必要な列（日付・スタッフID・出勤時刻・退勤時刻）がありません', updated: 0 };
+  }
+
+  const optFamily = options.staffFamilyName ? String(options.staffFamilyName).trim() : '';
+  const optStart = options.startDateStr ? String(options.startDateStr).trim() : '';
+  const optEnd = options.endDateStr ? String(options.endDateStr).trim() : '';
+
+  // 打刻記録の (日付, スタッフID) → 行番号のリスト（複数ある場合はすべて更新）
+  const tsRowsByKey = {};
+  const tsLastRow = tsSheet.getLastRow();
+  const tsNumCols = tsSheet.getLastColumn();
+  const tsRows = tsSheet.getRange(2, 1, tsLastRow, tsNumCols).getValues();
+  tsRows.forEach(function (row, i) {
+    const dateStr = normalizeDateStr(row[tsDateIdx], tz);
+    const uuid = String(row[tsUuidIdx] || '').trim();
+    if (!dateStr || !uuid) return;
+    if (optStart && dateStr < optStart) return;
+    if (optEnd && dateStr > optEnd) return;
+    const key = dateStr + '\t' + uuid;
+    if (!tsRowsByKey[key]) tsRowsByKey[key] = [];
+    tsRowsByKey[key].push({ rowIndex: i + 2, row: row });
+  });
+
+  var updated = 0;
+  const sheetNames = [STAFF_SHEET_NAME, TIMESTAMP_SHEET_NAME, TRANSFER_SHEET_NAME];
+  ss.getSheets().forEach(function (s) {
+    const name = s.getName();
+    if (sheetNames.indexOf(name) >= 0) return;
+    if (optFamily && name !== optFamily) return;
+    const staff = familyNameToStaff[name];
+    if (!staff) return;
+
+    var shHeader = getSheetHeaderOrder(s, 2);
+    var dateIdx = shHeader.nameToIndex['日付'];
+    var startIdx = resolveColumnIndex(shHeader, ['始業', '出勤時刻', '出勤']);
+    var endIdx = resolveColumnIndex(shHeader, ['終業', '退勤時刻', '退勤']);
+    var breakIdx = shHeader.nameToIndex['休憩時間(時間)'];
+    if (dateIdx === undefined) {
+      shHeader = getSheetHeaderOrder(s, 1);
+      dateIdx = shHeader.nameToIndex['日付'];
+      startIdx = resolveColumnIndex(shHeader, ['始業', '出勤時刻', '出勤']);
+      endIdx = resolveColumnIndex(shHeader, ['終業', '退勤時刻', '退勤']);
+      breakIdx = shHeader.nameToIndex['休憩時間(時間)'];
+    }
+    if (dateIdx === undefined) return;
+    if (startIdx === undefined || endIdx === undefined) {
+      if (dateIdx === 0 && shHeader.headerNames && shHeader.headerNames.length >= 3) {
+        startIdx = 1;
+        endIdx = 2;
+      } else {
+        return;
+      }
+    }
+
+    var dataFirstRow = 2;
+    if (getSheetHeaderOrder(s, 2).nameToIndex['日付'] !== undefined) dataFirstRow = 3;
+    const lastRow = s.getLastRow();
+    if (lastRow < dataFirstRow) return;
+
+    const rows = s.getRange(dataFirstRow, 1, lastRow, s.getLastColumn()).getValues();
+    rows.forEach(function (row) {
+      const dateStr = normalizeDateStr(row[dateIdx], tz);
+      if (!dateStr) return;
+      if (optStart && dateStr < optStart) return;
+      if (optEnd && dateStr > optEnd) return;
+
+      const startVal = formatTimeForTransfer(row[startIdx], tz);
+      const endVal = formatTimeForTransfer(row[endIdx], tz, { isEndTime: true });
+      const breakVal = row[breakIdx] != null ? Number(row[breakIdx]) : 0;
+
+      const key = dateStr + '\t' + String(staff.uuid || '').trim();
+      const targets = tsRowsByKey[key];
+      if (!targets || targets.length === 0) return;
+
+      targets.forEach(function (t) {
+        const newRow = t.row.slice();
+        newRow[tsStartIdx] = startVal;
+        newRow[tsEndIdx] = endVal;
+        if (tsBreakIdx !== undefined) newRow[tsBreakIdx] = breakVal;
+        const range = tsSheet.getRange(t.rowIndex, 1, 1, tsNumCols); // (row, col, numRows, numCols)
+        range.setValues([newRow]);
+        updated++;
+      });
+    });
+  });
+
+  return {
+    ok: true,
+    message: updated > 0 ? '打刻記録を ' + updated + ' 件更新しました' : '更新対象の差異はありませんでした',
+    updated: updated
+  };
+}
+
+/**
  * 日次転記バッチ: 打刻記録と各スタッフシートの「休み」を転記用シートに重複なく追記し、
  * 過去範囲に指定がある場合は既存行の内容を正規データと照合して更新する。
+ * backwardDays > 0 のときは、転記の前に「スタッフシート → 打刻記録」の同期を同じ日付範囲で自動実行する。
  * @param {string} [targetDateStr] 対象日 (yyyy-MM-dd)。省略時は「昨日」。
  * @param {{ backwardDays?: number }} [options] backwardDays: 対象日の何日前までを「更新対象」にするか。0のときは追記のみ。例: 60 で過去60日分の変更を反映。
- * @returns {{ ok: boolean, message: string, appended: number, updated: number }}
+ * @returns {{ ok: boolean, message: string, appended: number, updated: number, synced?: number }}
  */
 function runDailyTransfer(targetDateStr, options) {
   const tz = Session.getScriptTimeZone();
@@ -360,6 +542,19 @@ function runDailyTransfer(targetDateStr, options) {
     return { ok: false, message: '打刻記録 シートが見つかりません', appended: 0, updated: 0 };
   }
 
+  var startDateStr = targetDateStr;
+  if (backwardDays > 0) {
+    var startDate = new Date(targetDateStr + 'T00:00:00');
+    startDate.setDate(startDate.getDate() - backwardDays);
+    startDateStr = Utilities.formatDate(startDate, tz, 'yyyy-MM-dd');
+  }
+
+  var synced = 0;
+  if (backwardDays > 0) {
+    var syncResult = syncStaffSheetToTimestamp({ startDateStr: startDateStr, endDateStr: targetDateStr });
+    if (syncResult.ok && syncResult.updated) synced = syncResult.updated;
+  }
+
   const transferSheet = ensureTransferSheet();
   const header = getSheetHeaderOrder(transferSheet);
   const staffList = getStaffList();
@@ -369,12 +564,6 @@ function runDailyTransfer(targetDateStr, options) {
     if (family && !familyNameToStaff[family]) familyNameToStaff[family] = s;
   });
 
-  var startDateStr = targetDateStr;
-  if (backwardDays > 0) {
-    var startDate = new Date(targetDateStr + 'T00:00:00');
-    startDate.setDate(startDate.getDate() - backwardDays);
-    startDateStr = Utilities.formatDate(startDate, tz, 'yyyy-MM-dd');
-  }
   const canonical = buildCanonicalRowsForDateRange(ss, startDateStr, targetDateStr, staffList, familyNameToStaff, tz);
   const existingRows = getTransferSheetExistingRows(transferSheet);
   var lastRowBeforeChanges = transferSheet.getLastRow();
@@ -420,10 +609,13 @@ function runDailyTransfer(targetDateStr, options) {
   }
 
   var msg = '';
-  if (appended > 0) msg += '転記用に ' + appended + ' 件追記';
+  if (synced > 0) msg += '打刻記録を ' + synced + ' 件同期';
+  if (appended > 0) msg += (msg ? '。' : '') + '転記用に ' + appended + ' 件追記';
   if (updated > 0) msg += (msg ? '。' : '') + '既存 ' + updated + ' 件を更新（過去の変更を反映）';
-  if (appended === 0 && updated === 0) msg = '転記対象なし（既に転記済みかつ変更なし）';
-  return { ok: true, message: msg, appended: appended, updated: updated };
+  if (msg === '') msg = '転記対象なし（既に転記済みかつ変更なし）';
+  var result = { ok: true, message: msg, appended: appended, updated: updated };
+  if (synced > 0) result.synced = synced;
+  return result;
 }
 
 /**
@@ -465,6 +657,14 @@ function doGet(e) {
         case 'clearStaffCache':
           result = clearStaffCache();
           break;
+        case 'syncStaffSheetToTimestamp': {
+          const opt = {};
+          if (e.parameter.staffFamilyName) opt.staffFamilyName = e.parameter.staffFamilyName;
+          if (e.parameter.startDateStr) opt.startDateStr = e.parameter.startDateStr;
+          if (e.parameter.endDateStr) opt.endDateStr = e.parameter.endDateStr;
+          result = syncStaffSheetToTimestamp(opt);
+          break;
+        }
         default:
           throw new Error('Unknown action: ' + action);
       }
@@ -678,13 +878,15 @@ function recordTimestamp(payload) {
   }
 
   const header = getSheetHeaderOrder(tsSheet);
+  // 退勤時刻は 0:00 → 24:00、1:00 → 25:00 の表記で記録する
+  const endTimeDisplay = formatTimeTo24PlusNotation(endTime, Session.getScriptTimeZone());
   const rowData = {
     'タイムスタンプ': now,
     'スタッフID': payload.uuid || '',
     '氏名': payload.name || '',
     '日付': dateStr,
     '出勤時刻': startTime,
-    '退勤時刻': endTime,
+    '退勤時刻': endTimeDisplay,
     '休憩時間(時間)': breakHours
   };
   const rowValues = header.headerNames.map(function (colName) {
@@ -724,7 +926,7 @@ function recordTimestamp(payload) {
       staffSheet.getRange(nextRow, 1, 1, 4).setValues([[
         dateStr,
         startTime,
-        endTime,
+        endTimeDisplay,
         breakHours
       ]]);
     }
@@ -737,7 +939,7 @@ function recordTimestamp(payload) {
     row: rowAfter,
     timestamp: Utilities.formatDate(now, Session.getScriptTimeZone(), 'yyyy-MM-dd HH:mm:ss'),
     startTime: startTime,
-    endTime: endTime,
+    endTime: endTimeDisplay,
     breakMinutes: breakMinutes
   };
 }
